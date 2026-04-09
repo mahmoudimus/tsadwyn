@@ -1,4 +1,46 @@
 import type { ZodTypeAny } from "zod";
+import { getSchemaName as _getSchemaName } from "../zod-extend.js";
+
+// Valid HTTP methods for path-based instructions
+const VALID_HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+
+function validateHttpMethods(methods: string[]): void {
+  for (const m of methods) {
+    if (!VALID_HTTP_METHODS.has(m.toUpperCase())) {
+      throw new Error(`Invalid HTTP method: "${m}". Must be one of: ${[...VALID_HTTP_METHODS].join(", ")}`);
+    }
+  }
+}
+
+/**
+ * Cookie options for ResponseInfo.setCookie / deleteCookie.
+ */
+export interface CookieOptions {
+  domain?: string;
+  path?: string;
+  maxAge?: number;
+  httpOnly?: boolean;
+  secure?: boolean;
+  sameSite?: "strict" | "lax" | "none";
+  expires?: Date;
+}
+
+/**
+ * Internal record of a cookie that should be set on the response.
+ */
+export interface SetCookieRecord {
+  name: string;
+  value: string;
+  options?: CookieOptions;
+}
+
+/**
+ * Internal record of a cookie that should be deleted from the response.
+ */
+export interface DeleteCookieRecord {
+  name: string;
+  options?: CookieOptions;
+}
 
 /**
  * Information about the incoming request, available for migration callbacks.
@@ -7,11 +49,21 @@ export class RequestInfo {
   body: any;
   headers: Record<string, string>;
   queryParams: Record<string, string>;
+  cookies: Record<string, string>;
+  form: Array<[string, string | File]> | null;
 
-  constructor(body: any, headers: Record<string, string>, queryParams: Record<string, string> = {}) {
+  constructor(
+    body: any,
+    headers: Record<string, string>,
+    queryParams: Record<string, string> = {},
+    cookies: Record<string, string> = {},
+    form: Array<[string, string | File]> | null = null,
+  ) {
     this.body = body;
     this.headers = { ...headers };
     this.queryParams = { ...queryParams };
+    this.cookies = { ...cookies };
+    this.form = form;
   }
 }
 
@@ -23,10 +75,29 @@ export class ResponseInfo {
   statusCode: number;
   headers: Record<string, string>;
 
+  /** Cookies to set on the response after migration. */
+  _cookiesToSet: SetCookieRecord[] = [];
+  /** Cookies to delete from the response after migration. */
+  _cookiesToDelete: DeleteCookieRecord[] = [];
+
   constructor(body: any, statusCode: number = 200, headers: Record<string, string> = {}) {
     this.body = body;
     this.statusCode = statusCode;
     this.headers = { ...headers };
+  }
+
+  /**
+   * Queue a Set-Cookie header to be applied to the Express response.
+   */
+  setCookie(name: string, value: string, options?: CookieOptions): void {
+    this._cookiesToSet.push({ name, value, options });
+  }
+
+  /**
+   * Queue a cookie deletion to be applied to the Express response.
+   */
+  deleteCookie(name: string, options?: CookieOptions): void {
+    this._cookiesToDelete.push({ name, options });
   }
 }
 
@@ -38,6 +109,7 @@ export interface AlterRequestBySchemaInstruction {
   schemaNames: string[];
   transformer: (request: RequestInfo) => void;
   methodName: string;
+  checkUsage: boolean;
 }
 
 /**
@@ -48,64 +120,172 @@ export interface AlterResponseBySchemaInstruction {
   schemaNames: string[];
   transformer: (response: ResponseInfo) => void;
   methodName: string;
+  migrateHttpErrors: boolean;
+  checkUsage: boolean;
+}
+
+/**
+ * Internal instruction for request migration by path.
+ */
+export interface AlterRequestByPathInstruction {
+  kind: "alter_request_by_path";
+  path: string;
+  methods: Set<string>;
+  transformer: (request: RequestInfo) => void;
+  methodName: string;
+}
+
+/**
+ * Internal instruction for response migration by path.
+ */
+export interface AlterResponseByPathInstruction {
+  kind: "alter_response_by_path";
+  path: string;
+  methods: Set<string>;
+  transformer: (response: ResponseInfo) => void;
+  methodName: string;
+  migrateHttpErrors: boolean;
+}
+
+/**
+ * Options for convertRequestToNextVersionFor when using schema-based migration.
+ */
+export interface RequestMigrationOptions {
+  checkUsage?: boolean;
+}
+
+/**
+ * Options for convertResponseToPreviousVersionFor when using schema-based migration.
+ */
+export interface ResponseMigrationOptions {
+  migrateHttpErrors?: boolean;
+  checkUsage?: boolean;
 }
 
 /**
  * Decorator (used as a function) that marks a method as a request migration.
  *
- * In TypeScript we implement this as a higher-order function that returns a
- * property descriptor value (the instruction object) which gets placed on the
- * class at that property key.
+ * Can be called with Zod schemas or with a path + methods array.
  *
- * Usage inside a VersionChange subclass:
+ * Schema-based usage:
  * ```
  * @convertRequestToNextVersionFor(MySchema)
  * migrateRequest(request: RequestInfo) { ... }
  * ```
  *
- * Or as a function returning a decorator:
+ * Path-based usage:
  * ```
- * static migrateRequest = convertRequestToNextVersionFor(MySchema)(
- *   (request: RequestInfo) => { ... }
- * );
+ * @convertRequestToNextVersionFor("/users/:id", ["GET"])
+ * migrateRequest(request: RequestInfo) { ... }
  * ```
  */
 export function convertRequestToNextVersionFor(
-  ...schemas: Array<ZodTypeAny & { _tsadwynName?: string }>
+  pathOrFirstSchema: string | (ZodTypeAny & { _tsadwynName?: string }),
+  methodsOrSecondSchema?: string[] | (ZodTypeAny & { _tsadwynName?: string }),
+  ...rest: any[]
 ): any {
+  // Parse options from rest args if present
+  // Path-based: convertRequestToNextVersionFor("/path", ["GET"])
+  if (typeof pathOrFirstSchema === "string") {
+    if (!Array.isArray(methodsOrSecondSchema)) {
+      throw new TypeError("If path was provided as a first argument, methods must be provided as a second argument");
+    }
+    validateHttpMethods(methodsOrSecondSchema);
+    const path = pathOrFirstSchema;
+    const methods = new Set(methodsOrSecondSchema.map((m: string) => m.toUpperCase()));
+
+    return function decoratorOrWrapper(
+      targetOrTransformer: any,
+      propertyKeyOrUndefined?: string | symbol,
+      descriptorOrUndefined?: PropertyDescriptor,
+    ): any {
+      // Case 1: TypeScript decorator
+      if (propertyKeyOrUndefined !== undefined && descriptorOrUndefined !== undefined) {
+        const originalMethod = descriptorOrUndefined.value;
+        const instruction: AlterRequestByPathInstruction = {
+          kind: "alter_request_by_path",
+          path,
+          methods,
+          transformer: (request: RequestInfo) => originalMethod.call(targetOrTransformer, request),
+          methodName: String(propertyKeyOrUndefined),
+        };
+        descriptorOrUndefined.value = instruction;
+        return descriptorOrUndefined;
+      }
+
+      // Case 2: Wrapping function
+      const transformer = targetOrTransformer as (request: RequestInfo) => void;
+      const instruction: AlterRequestByPathInstruction = {
+        kind: "alter_request_by_path",
+        path,
+        methods,
+        transformer,
+        methodName: transformer.name || "anonymous",
+      };
+      return instruction;
+    };
+  }
+
+  // Schema-based: convertRequestToNextVersionFor(Schema1, Schema2, ..., { checkUsage: true })
+  const schemas: Array<ZodTypeAny & { _tsadwynName?: string }> = [pathOrFirstSchema];
+  let options: RequestMigrationOptions = {};
+
+  if (methodsOrSecondSchema !== undefined) {
+    // Could be another schema or not present
+    if (typeof methodsOrSecondSchema === "object" && "_def" in (methodsOrSecondSchema as any)) {
+      schemas.push(methodsOrSecondSchema as ZodTypeAny & { _tsadwynName?: string });
+    } else if (typeof methodsOrSecondSchema === "object" && !("_def" in (methodsOrSecondSchema as any))) {
+      // Second argument is an options object, not a schema
+      options = methodsOrSecondSchema as RequestMigrationOptions;
+    }
+  }
+
+  // Check rest for more schemas or options
+  for (const arg of rest) {
+    if (arg && typeof arg === "object" && "_def" in arg) {
+      schemas.push(arg);
+    } else if (arg && typeof arg === "object" && !("_def" in arg)) {
+      options = arg as RequestMigrationOptions;
+    }
+  }
+
+  const checkUsage = options.checkUsage !== undefined ? options.checkUsage : true;
+
   const schemaNames = schemas.map((s) => {
-    if (!s._tsadwynName) {
+    const name = _getSchemaName(s);
+    if (!name) {
       throw new Error("Schema must have a name. Use `.named('SchemaName')` on the Zod schema.");
     }
-    return s._tsadwynName;
+    return name;
   });
 
-  // This can be used either as a decorator or as a function that wraps a callback.
   return function decoratorOrWrapper(
     targetOrTransformer: any,
     propertyKeyOrUndefined?: string | symbol,
     descriptorOrUndefined?: PropertyDescriptor,
   ): any {
-    // Case 1: Used as a TypeScript decorator (@convertRequestToNextVersionFor(Schema))
+    // Case 1: TypeScript decorator
     if (propertyKeyOrUndefined !== undefined && descriptorOrUndefined !== undefined) {
       const originalMethod = descriptorOrUndefined.value;
       const instruction: AlterRequestBySchemaInstruction = {
         kind: "alter_request_by_schema",
         schemaNames,
-        transformer: (request: RequestInfo) => originalMethod(request),
+        transformer: (request: RequestInfo) => originalMethod.call(targetOrTransformer, request),
         methodName: String(propertyKeyOrUndefined),
+        checkUsage,
       };
       descriptorOrUndefined.value = instruction;
       return descriptorOrUndefined;
     }
 
-    // Case 2: Used as a wrapping function
+    // Case 2: Wrapping function
     const transformer = targetOrTransformer as (request: RequestInfo) => void;
     const instruction: AlterRequestBySchemaInstruction = {
       kind: "alter_request_by_schema",
       schemaNames,
       transformer,
       methodName: transformer.name || "anonymous",
+      checkUsage,
     };
     return instruction;
   };
@@ -114,16 +294,106 @@ export function convertRequestToNextVersionFor(
 /**
  * Decorator (used as a function) that marks a method as a response migration.
  *
- * Same usage patterns as convertRequestToNextVersionFor but for responses.
+ * Can be called with Zod schemas or with a path + methods array.
+ *
+ * Schema-based usage:
+ * ```
+ * @convertResponseToPreviousVersionFor(MySchema, { migrateHttpErrors: true })
+ * migrateResponse(response: ResponseInfo) { ... }
+ * ```
+ *
+ * Path-based usage:
+ * ```
+ * @convertResponseToPreviousVersionFor("/users/:id", ["GET"], { migrateHttpErrors: true })
+ * migrateResponse(response: ResponseInfo) { ... }
+ * ```
  */
 export function convertResponseToPreviousVersionFor(
-  ...schemas: Array<ZodTypeAny & { _tsadwynName?: string }>
+  pathOrFirstSchema: string | (ZodTypeAny & { _tsadwynName?: string }),
+  methodsOrSecondSchema?: string[] | (ZodTypeAny & { _tsadwynName?: string }),
+  ...rest: any[]
 ): any {
+  // Path-based
+  if (typeof pathOrFirstSchema === "string") {
+    if (!Array.isArray(methodsOrSecondSchema)) {
+      throw new TypeError("If path was provided as a first argument, methods must be provided as a second argument");
+    }
+    validateHttpMethods(methodsOrSecondSchema);
+    const path = pathOrFirstSchema;
+    const methods = new Set(methodsOrSecondSchema.map((m: string) => m.toUpperCase()));
+
+    // Check for options in rest
+    let migrateHttpErrors = false;
+    for (const arg of rest) {
+      if (arg && typeof arg === "object" && "migrateHttpErrors" in arg) {
+        migrateHttpErrors = arg.migrateHttpErrors ?? false;
+      }
+    }
+
+    return function decoratorOrWrapper(
+      targetOrTransformer: any,
+      propertyKeyOrUndefined?: string | symbol,
+      descriptorOrUndefined?: PropertyDescriptor,
+    ): any {
+      // Case 1: TypeScript decorator
+      if (propertyKeyOrUndefined !== undefined && descriptorOrUndefined !== undefined) {
+        const originalMethod = descriptorOrUndefined.value;
+        const instruction: AlterResponseByPathInstruction = {
+          kind: "alter_response_by_path",
+          path,
+          methods,
+          transformer: (response: ResponseInfo) => originalMethod.call(targetOrTransformer, response),
+          methodName: String(propertyKeyOrUndefined),
+          migrateHttpErrors,
+        };
+        descriptorOrUndefined.value = instruction;
+        return descriptorOrUndefined;
+      }
+
+      // Case 2: Wrapping function
+      const transformer = targetOrTransformer as (response: ResponseInfo) => void;
+      const instruction: AlterResponseByPathInstruction = {
+        kind: "alter_response_by_path",
+        path,
+        methods,
+        transformer,
+        methodName: transformer.name || "anonymous",
+        migrateHttpErrors,
+      };
+      return instruction;
+    };
+  }
+
+  // Schema-based
+  const schemas: Array<ZodTypeAny & { _tsadwynName?: string }> = [pathOrFirstSchema];
+  let options: ResponseMigrationOptions = {};
+
+  if (methodsOrSecondSchema !== undefined) {
+    if (typeof methodsOrSecondSchema === "object" && "_def" in (methodsOrSecondSchema as any)) {
+      schemas.push(methodsOrSecondSchema as ZodTypeAny & { _tsadwynName?: string });
+    } else if (typeof methodsOrSecondSchema === "object" && !("_def" in (methodsOrSecondSchema as any))) {
+      // Second argument is an options object, not a schema
+      options = methodsOrSecondSchema as ResponseMigrationOptions;
+    }
+  }
+
+  for (const arg of rest) {
+    if (arg && typeof arg === "object" && "_def" in arg) {
+      schemas.push(arg);
+    } else if (arg && typeof arg === "object" && !("_def" in arg)) {
+      options = arg as ResponseMigrationOptions;
+    }
+  }
+
+  const migrateHttpErrors = options.migrateHttpErrors !== undefined ? options.migrateHttpErrors : false;
+  const checkUsage = options.checkUsage !== undefined ? options.checkUsage : true;
+
   const schemaNames = schemas.map((s) => {
-    if (!s._tsadwynName) {
+    const name = _getSchemaName(s);
+    if (!name) {
       throw new Error("Schema must have a name. Use `.named('SchemaName')` on the Zod schema.");
     }
-    return s._tsadwynName;
+    return name;
   });
 
   return function decoratorOrWrapper(
@@ -131,26 +401,30 @@ export function convertResponseToPreviousVersionFor(
     propertyKeyOrUndefined?: string | symbol,
     descriptorOrUndefined?: PropertyDescriptor,
   ): any {
-    // Case 1: Used as a TypeScript decorator
+    // Case 1: TypeScript decorator
     if (propertyKeyOrUndefined !== undefined && descriptorOrUndefined !== undefined) {
       const originalMethod = descriptorOrUndefined.value;
       const instruction: AlterResponseBySchemaInstruction = {
         kind: "alter_response_by_schema",
         schemaNames,
-        transformer: (response: ResponseInfo) => originalMethod(response),
+        transformer: (response: ResponseInfo) => originalMethod.call(targetOrTransformer, response),
         methodName: String(propertyKeyOrUndefined),
+        migrateHttpErrors,
+        checkUsage,
       };
       descriptorOrUndefined.value = instruction;
       return descriptorOrUndefined;
     }
 
-    // Case 2: Used as a wrapping function
+    // Case 2: Wrapping function
     const transformer = targetOrTransformer as (response: ResponseInfo) => void;
     const instruction: AlterResponseBySchemaInstruction = {
       kind: "alter_response_by_schema",
       schemaNames,
       transformer,
       methodName: transformer.name || "anonymous",
+      migrateHttpErrors,
+      checkUsage,
     };
     return instruction;
   };
