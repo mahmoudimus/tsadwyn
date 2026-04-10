@@ -177,6 +177,9 @@ describe("concurrent version requests", () => {
   });
 
   it("handles a burst of requests alternating versions rapidly", async () => {
+    // Stress test: 50 concurrent requests with random 0-10ms artificial delays
+    // inside each handler. Bump the timeout to 15s to accommodate supertest
+    // socket reuse under load.
     const count = 50;
     const promises: Promise<any>[] = [];
 
@@ -216,5 +219,5 @@ describe("concurrent version requests", () => {
         expect(res.body.tag).toBeUndefined();
       }
     }
-  });
+  }, 15000);
 });

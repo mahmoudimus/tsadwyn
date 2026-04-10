@@ -138,6 +138,46 @@ For full documentation on API versioning concepts, see the [Cadwyn docs](https:/
 | `apiVersionStorage` | AsyncLocalStorage holding the current version |
 | `generateVersionedRouters` | Low-level router generation function |
 
+## CLI
+
+tsadwyn ships a small CLI that mirrors a subset of Cadwyn's Python CLI. When the package is installed, the `tsadwyn` binary is available on your `PATH`; during development you can invoke it with `npx tsx src/cli.ts`.
+
+```bash
+tsadwyn --version            # prints the CLI version
+tsadwyn -V                   # alias for --version
+tsadwyn --help               # lists available commands
+```
+
+### `tsadwyn codegen --app <path>`
+
+Loads a TypeScript/JavaScript module that exports a Cadwyn application (either as `default` or as a named `app` export), triggers versioned-router generation, and prints a summary of the resulting versions and route counts.
+
+```bash
+tsadwyn codegen --app ./src/app.ts
+```
+
+If the module also exports a `routers` (or `versionedRouters`) value, it is forwarded to `generateAndIncludeVersionedRouters()`; otherwise the CLI assumes the module already called it at import time.
+
+### `tsadwyn info --app <path>`
+
+Prints structured information about an app's versions: the number of versions, a per-version route count, and a rollup of schemas touched by version changes. Useful for introspecting a deployed app or diffing versioned surface area in CI.
+
+```bash
+tsadwyn info --app ./src/app.ts
+tsadwyn info --app ./src/app.ts --api-version 2024-11-01
+tsadwyn info --app ./src/app.ts --json
+```
+
+Options:
+
+| Flag | Description |
+|------|-------------|
+| `--app <path>` | Required. Path to the module exporting the Cadwyn app. |
+| `--api-version <value>` | Show info for a single API version only. Named `--api-version` (not `--version`) to avoid collision with the program's own `--version` flag. |
+| `--json` | Emit a single JSON line instead of formatted text, suitable for piping through `jq`. |
+
+Because tsadwyn's schemas are runtime Zod objects rather than source code, there is no equivalent of Cadwyn's `render model` / `render module` subcommands -- `info` is the TypeScript-idiomatic replacement.
+
 ## License
 
 MIT
