@@ -8,6 +8,8 @@ import {
   createProgram,
   runCodegen,
   runInfo,
+  runNewVersion,
+  generateVersionChangeSource,
   program as defaultProgram,
   CLI_VERSION,
   isMainModule,
@@ -498,3 +500,330 @@ describe("CLI: isMainModule guard", () => {
     expect(isMainModule()).toBe(false);
   });
 });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// `new version` command — scaffolds a new VersionChange file
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe("CLI: new version — generateVersionChangeSource (pure function)", () => {
+  it("generates an empty scaffold with default class name when no options", () => {
+    const { className, source } = generateVersionChangeSource({ date: "2024-12-01" });
+    expect(className).toBe("V20241201Change");
+    expect(source).toContain(`export class V20241201Change extends VersionChange`);
+    expect(source).toContain(`description = "TODO: describe what changed in version 2024-12-01"`);
+    expect(source).toContain(`instructions = [`);
+    expect(source).toContain(`// TODO: add schema() / endpoint() instructions here.`);
+  });
+
+  it("derives PascalCase class name from description", () => {
+    const { className } = generateVersionChangeSource({
+      date: "2024-12-01",
+      description: "Rename payment_method to payment_source",
+    });
+    expect(className).toBe("RenamePaymentMethodToPaymentSource");
+  });
+
+  it("uses explicit --name override when provided", () => {
+    const { className } = generateVersionChangeSource({
+      date: "2024-12-01",
+      name: "MyCustomChange",
+    });
+    expect(className).toBe("MyCustomChange");
+  });
+
+  it("falls back to date-based class name when explicit name is invalid", () => {
+    const { className } = generateVersionChangeSource({
+      date: "2024-12-01",
+      name: "123-bad",
+    });
+    expect(className).toMatch(/^V/);
+  });
+
+  it("generates rename instruction with correct direction", () => {
+    const { source } = generateVersionChangeSource({
+      date: "2024-12-01",
+      renameField: ["ChargeResource.payment_source=payment_method"],
+    });
+    // current name is payment_source, old name is payment_method
+    expect(source).toContain(
+      `schema(ChargeResource).field("payment_source").had({ name: "payment_method" })`,
+    );
+    // Request migration: old sends payment_method -> current payment_source
+    expect(source).toContain(`if ("payment_method" in request.body)`);
+    expect(source).toContain(`request.body["payment_source"] = request.body["payment_method"]`);
+    // Response migration: head returns payment_source -> old payment_method
+    expect(source).toContain(`if ("payment_source" in response.body)`);
+    expect(source).toContain(`response.body["payment_method"] = response.body["payment_source"]`);
+  });
+
+  it("generates an add-field instruction using didntExist", () => {
+    const { source } = generateVersionChangeSource({
+      date: "2024-12-01",
+      addField: ["UserResource.phone_number"],
+    });
+    expect(source).toContain(`schema(UserResource).field("phone_number").didntExist`);
+  });
+
+  it("generates a remove-field instruction using existedAs", () => {
+    const { source } = generateVersionChangeSource({
+      date: "2024-12-01",
+      removeField: ["UserResource.legacy_flag"],
+    });
+    expect(source).toContain(
+      `schema(UserResource).field("legacy_flag").existedAs({ type: z.unknown() })`,
+    );
+    expect(source).toContain(`migrateResponse_UserResource_legacy_flag`);
+    expect(source).toContain(`response.body["legacy_flag"] = null`);
+  });
+
+  it("generates an add-endpoint instruction using didntExist", () => {
+    const { source } = generateVersionChangeSource({
+      date: "2024-12-01",
+      addEndpoint: ["POST /users"],
+    });
+    expect(source).toContain(`endpoint("/users", ["POST"]).didntExist`);
+  });
+
+  it("generates a remove-endpoint instruction using existed", () => {
+    const { source } = generateVersionChangeSource({
+      date: "2024-12-01",
+      removeEndpoint: ["DELETE /users/:id/legacy"],
+    });
+    expect(source).toContain(`endpoint("/users/:id/legacy", ["DELETE"]).existed`);
+  });
+
+  it("collects and imports all schema names referenced in instructions", () => {
+    const { source } = generateVersionChangeSource({
+      date: "2024-12-01",
+      renameField: ["ChargeResource.payment_source=payment_method"],
+      addField: ["UserResource.phone"],
+      removeField: ["AccountResource.legacy"],
+    });
+    expect(source).toContain(
+      `import { AccountResource, ChargeResource, UserResource } from "../schemas.js"`,
+    );
+  });
+
+  it("only imports schema helper when schema instructions are present", () => {
+    const { source } = generateVersionChangeSource({
+      date: "2024-12-01",
+      addEndpoint: ["POST /users"],
+    });
+    expect(source).toContain(`import { VersionChange, endpoint }`);
+    expect(source).not.toContain(`, schema,`);
+    expect(source).not.toContain(`, schema }`);
+  });
+
+  it("only imports migration helpers when renames or removes are present", () => {
+    const emptySrc = generateVersionChangeSource({ date: "2024-12-01" }).source;
+    expect(emptySrc).not.toContain("convertRequestToNextVersionFor");
+    expect(emptySrc).not.toContain("RequestInfo");
+
+    const addFieldOnly = generateVersionChangeSource({
+      date: "2024-12-01",
+      addField: ["UserResource.phone"],
+    }).source;
+    // add-field doesn't need migration callbacks (field just didn't exist before)
+    expect(addFieldOnly).not.toContain("convertRequestToNextVersionFor");
+  });
+});
+
+describe("CLI: runNewVersion", () => {
+  let tempDir: string;
+  beforeEach(() => {
+    tempDir = mkdtempSync(join(tmpdir(), "tsadwyn-newversion-"));
+  });
+  afterEach(() => {
+    try {
+      rmSync(tempDir, { recursive: true, force: true });
+    } catch {
+      // ignore cleanup errors
+    }
+  });
+
+  it("writes a new version file to disk", async () => {
+    const result = await runNewVersion({
+      date: "2024-12-01",
+      description: "Rename payment method",
+      dir: tempDir,
+      renameField: ["ChargeResource.payment_source=payment_method"],
+    });
+    expect(result.exitCode).toBe(0);
+    const output = result.output.join("\n");
+    expect(output).toContain(`Created new version file`);
+    expect(output).toContain(`2024-12-01.ts`);
+    expect(output).toContain(`Next steps`);
+    expect(output).toContain(`new Version("2024-12-01", RenamePaymentMethod)`);
+
+    const { readFileSync, existsSync } = await import("node:fs");
+    const filePath = join(tempDir, "2024-12-01.ts");
+    expect(existsSync(filePath)).toBe(true);
+    const content = readFileSync(filePath, "utf-8");
+    expect(content).toContain(`export class RenamePaymentMethod extends VersionChange`);
+  });
+
+  it("dry-run mode does NOT write a file", async () => {
+    const result = await runNewVersion({
+      date: "2024-12-01",
+      dir: tempDir,
+      dryRun: true,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.output.join("\n")).toContain("Dry run");
+    expect(result.output.join("\n")).toContain("export class V20241201Change");
+
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(join(tempDir, "2024-12-01.ts"))).toBe(false);
+  });
+
+  it("rejects a missing date", async () => {
+    const result = await runNewVersion({ date: "" });
+    expect(result.exitCode).toBe(1);
+    expect(result.output.join("\n")).toContain("must be an ISO date");
+  });
+
+  it("rejects an invalid date format", async () => {
+    const result = await runNewVersion({ date: "not-a-date" });
+    expect(result.exitCode).toBe(1);
+    expect(result.output.join("\n")).toContain("must be an ISO date");
+  });
+
+  it("rejects a malformed --rename-field spec", async () => {
+    const result = await runNewVersion({
+      date: "2024-12-01",
+      renameField: ["badspec"],
+      dir: tempDir,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.output.join("\n")).toContain("--rename-field must be");
+  });
+
+  it("rejects a malformed --add-field spec", async () => {
+    const result = await runNewVersion({
+      date: "2024-12-01",
+      addField: ["noDotHere"],
+      dir: tempDir,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.output.join("\n")).toContain("--add-field must be");
+  });
+
+  it("rejects a malformed --remove-field spec", async () => {
+    const result = await runNewVersion({
+      date: "2024-12-01",
+      removeField: ["noDotHere"],
+      dir: tempDir,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.output.join("\n")).toContain("--remove-field must be");
+  });
+
+  it("rejects a malformed --add-endpoint spec (no method)", async () => {
+    const result = await runNewVersion({
+      date: "2024-12-01",
+      addEndpoint: ["/users"],
+      dir: tempDir,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.output.join("\n")).toContain("--add-endpoint must be");
+  });
+
+  it("rejects a malformed --remove-endpoint spec (invalid method)", async () => {
+    const result = await runNewVersion({
+      date: "2024-12-01",
+      removeEndpoint: ["BOGUS /users"],
+      dir: tempDir,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.output.join("\n")).toContain("--remove-endpoint must be");
+  });
+
+  it("refuses to overwrite existing file without --force", async () => {
+    // First run creates the file
+    const first = await runNewVersion({ date: "2024-12-01", dir: tempDir });
+    expect(first.exitCode).toBe(0);
+
+    // Second run should fail
+    const second = await runNewVersion({ date: "2024-12-01", dir: tempDir });
+    expect(second.exitCode).toBe(1);
+    expect(second.output.join("\n")).toContain("already exists");
+    expect(second.output.join("\n")).toContain("--force");
+  });
+
+  it("overwrites existing file with --force", async () => {
+    const first = await runNewVersion({ date: "2024-12-01", dir: tempDir });
+    expect(first.exitCode).toBe(0);
+
+    const second = await runNewVersion({
+      date: "2024-12-01",
+      dir: tempDir,
+      force: true,
+      description: "Second version",
+    });
+    expect(second.exitCode).toBe(0);
+
+    const { readFileSync } = await import("node:fs");
+    const content = readFileSync(join(tempDir, "2024-12-01.ts"), "utf-8");
+    expect(content).toContain("Second version");
+  });
+
+  it("creates the output directory if it doesn't exist", async () => {
+    const nestedDir = join(tempDir, "src", "versions");
+    const result = await runNewVersion({
+      date: "2024-12-01",
+      dir: nestedDir,
+    });
+    expect(result.exitCode).toBe(0);
+    expect(result.output.join("\n")).toContain("Created directory");
+
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(join(nestedDir, "2024-12-01.ts"))).toBe(true);
+  });
+});
+
+describe("CLI: new version — integration with createProgram", () => {
+  it("--help shows the new version command options", async () => {
+    const run = (argv: string[]) => runArgv(argv);
+    const result = await run(["new", "version", "--help"]);
+    const out = result.stdout.join("") + result.stderr.join("");
+    expect(out).toContain("--date");
+    expect(out).toContain("--rename-field");
+    expect(out).toContain("--add-field");
+    expect(out).toContain("--remove-field");
+    expect(out).toContain("--dry-run");
+  });
+
+  it("missing --date throws CommanderError", async () => {
+    const result = await runArgv(["new", "version"]);
+    expect(result.error).toBeDefined();
+  });
+});
+
+async function runArgv(argv: string[]): Promise<RunResult> {
+  const prog = createProgram();
+  const stdout: string[] = [];
+  const stderr: string[] = [];
+
+  // Recursively configure exit override and output capture on every
+  // (sub)command so that help/version messages on deeply-nested commands
+  // (like `new version --help`) are captured rather than written to process.stdout.
+  const configure = (cmd: any): void => {
+    cmd.exitOverride();
+    cmd.configureOutput({
+      writeOut: (s: string) => stdout.push(s),
+      writeErr: (s: string) => stderr.push(s),
+    });
+    for (const child of cmd.commands ?? []) {
+      configure(child);
+    }
+  };
+  configure(prog);
+
+  let error: RunResult["error"] = undefined;
+  try {
+    await prog.parseAsync(["node", "tsadwyn", ...argv]);
+  } catch (err: any) {
+    error = err;
+  }
+  return { stdout, stderr, error };
+}

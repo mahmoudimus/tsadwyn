@@ -178,6 +178,63 @@ Options:
 
 Because tsadwyn's schemas are runtime Zod objects rather than source code, there is no equivalent of Cadwyn's `render model` / `render module` subcommands -- `info` is the TypeScript-idiomatic replacement.
 
+### `tsadwyn new version --date <YYYY-MM-DD>`
+
+Scaffolds a new `VersionChange` file for a breaking API change. The easiest way to answer "I need to make a breaking change — what do I type?"
+
+```bash
+# Empty scaffold — fill in the instructions yourself
+tsadwyn new version --date 2024-12-01 --description "Rename payment_method to payment_source"
+
+# Scaffold with a field rename pre-populated (both instruction and migration callbacks)
+tsadwyn new version --date 2024-12-01 \
+  --description "Rename payment_method to payment_source on charges" \
+  --rename-field "ChargeResource.payment_source=payment_method"
+
+# Scaffold with multiple changes
+tsadwyn new version --date 2024-12-01 \
+  --description "Remove legacy flag, add phone field" \
+  --remove-field "UserResource.legacy_flag" \
+  --add-field "UserResource.phone_number" \
+  --remove-endpoint "DELETE /users/:id/legacy"
+
+# Print without writing
+tsadwyn new version --date 2024-12-01 --dry-run
+```
+
+**What it generates:** a TypeScript file at `./src/versions/<date>.ts` (configurable via `--dir`) containing:
+- A `VersionChange` subclass with a derived PascalCase name (or `--name` override)
+- Imports for `VersionChange`, any helpers you need (`schema`, `endpoint`, migration decorators), and placeholder schema imports
+- The `instructions` array pre-populated with inline TODO comments
+- Request and response migration callback stubs that correctly route data in both directions
+- A "Next steps" block telling you exactly which line to add to your `VersionBundle`
+
+**Rename convention:** `--rename-field "Schema.currentName=oldName"` means the field is currently called `currentName` in the head schema and was called `oldName` in the previous version. The generated request migration converts old clients' `oldName` → `currentName`, and the response migration rewrites the head's `currentName` → `oldName` for old clients.
+
+**Add vs remove semantics:**
+- `--add-field "Schema.field"` — the field is *new* in this version. The older version didn't have it. Generates `schema().field().didntExist` (no migration callback needed — Zod just drops unknown fields from responses going back to old clients).
+- `--remove-field "Schema.field"` — the field was *removed* in this version. The older version still expects it. Generates `schema().field().existedAs({ type: z.unknown() })` plus a response migration stub where you need to supply a sensible default for the removed field.
+
+**Endpoint semantics:** `--add-endpoint "METHOD /path"` and `--remove-endpoint "METHOD /path"` produce `endpoint().didntExist` / `endpoint().existed` instructions.
+
+Options:
+
+| Flag | Description |
+|------|-------------|
+| `--date <YYYY-MM-DD>` | Required. ISO date for the new version. |
+| `--description <text>` | Human-readable description. Defaults to a TODO placeholder. |
+| `--dir <path>` | Output directory. Default: `./src/versions`. |
+| `--name <ClassName>` | Override the derived class name. |
+| `--rename-field <spec>` | Pre-populate a field rename. Repeatable. |
+| `--add-field <spec>` | Pre-populate a field addition. Repeatable. |
+| `--remove-field <spec>` | Pre-populate a field removal. Repeatable. |
+| `--add-endpoint <spec>` | Pre-populate an endpoint addition. Repeatable. |
+| `--remove-endpoint <spec>` | Pre-populate an endpoint removal. Repeatable. |
+| `--dry-run` | Print generated content without writing. |
+| `--force` | Overwrite an existing file at the target path. |
+
+After scaffolding, the CLI prints a "Next steps" box with the exact `import` and `new Version(...)` lines to add to your `VersionBundle`. tsadwyn does NOT auto-wire the VersionBundle for you — that's intentional, so you stay in control of your version ordering.
+
 ## License
 
 MIT

@@ -22,7 +22,8 @@
 
 import { Command, CommanderError } from "commander";
 import { pathToFileURL } from "node:url";
-import { resolve } from "node:path";
+import { resolve, join, dirname } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 
 /**
  * The version string reported by `tsadwyn --version` / `tsadwyn -V`.
@@ -324,6 +325,456 @@ export async function runInfo(options: InfoOptions): Promise<CommandResult> {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// `new version` command — scaffold a new VersionChange file
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * A single field rename parsed from `--rename-field Schema.currentName=oldName` flags.
+ * `currentName` is the name in the head (latest) schema; `oldName` is what the
+ * field was called in the previous version.
+ */
+interface RenameFieldSpec {
+  schema: string;
+  /** The name in the head (latest) schema. */
+  currentName: string;
+  /** The name in the previous (older) version. */
+  oldName: string;
+}
+
+/**
+ * A single field addition/removal parsed from `--add-field Schema.name` /
+ * `--remove-field Schema.name`. The semantic is from the perspective of the
+ * new version: "add" means head gained the field (older version didn't have it),
+ * "remove" means head dropped the field (older version kept it).
+ */
+interface FieldSpec {
+  schema: string;
+  field: string;
+}
+
+/**
+ * A single endpoint addition/removal parsed from
+ * `--add-endpoint "METHOD /path"` / `--remove-endpoint "METHOD /path"`.
+ */
+interface EndpointSpec {
+  method: string;
+  path: string;
+}
+
+/**
+ * Options accepted by the `new version` command.
+ */
+export interface NewVersionOptions {
+  /** Date string (YYYY-MM-DD) for the new version. */
+  date: string;
+  /** Human-readable description of what changed. */
+  description?: string;
+  /** Output directory for the new file (default: `./src/versions`). */
+  dir?: string;
+  /** Class name for the VersionChange subclass (default: auto-derived). */
+  name?: string;
+  /** Field rename specs: "Schema.old=new". */
+  renameField?: string[];
+  /** Field addition specs: "Schema.field" (head added, old version didn't have). */
+  addField?: string[];
+  /** Field removal specs: "Schema.field" (head removed, old version had). */
+  removeField?: string[];
+  /** Endpoint addition specs: "METHOD /path" (head added, old version didn't have). */
+  addEndpoint?: string[];
+  /** Endpoint removal specs: "METHOD /path" (head removed, old version had). */
+  removeEndpoint?: string[];
+  /** Print the generated content without writing to disk. */
+  dryRun?: boolean;
+  /** Overwrite existing file if present. */
+  force?: boolean;
+}
+
+const ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+const VALID_HTTP_METHODS = new Set(["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]);
+
+/**
+ * Parse a "Schema.currentName=oldName" rename spec.
+ * LHS is the name in the head schema (current), RHS is the name in the previous version.
+ */
+function parseRenameFieldSpec(spec: string): RenameFieldSpec | null {
+  const [left, right] = spec.split("=", 2);
+  if (!left || !right) return null;
+  const dotIdx = left.indexOf(".");
+  if (dotIdx < 0) return null;
+  const schema = left.slice(0, dotIdx).trim();
+  const currentName = left.slice(dotIdx + 1).trim();
+  const oldName = right.trim();
+  if (!schema || !currentName || !oldName) return null;
+  return { schema, currentName, oldName };
+}
+
+/**
+ * Parse a "Schema.field" spec.
+ */
+function parseFieldSpec(spec: string): FieldSpec | null {
+  const dotIdx = spec.indexOf(".");
+  if (dotIdx < 0) return null;
+  const schema = spec.slice(0, dotIdx).trim();
+  const field = spec.slice(dotIdx + 1).trim();
+  if (!schema || !field) return null;
+  return { schema, field };
+}
+
+/**
+ * Parse a "METHOD /path" spec.
+ */
+function parseEndpointSpec(spec: string): EndpointSpec | null {
+  const match = spec.trim().match(/^([A-Za-z]+)\s+(\S+)$/);
+  if (!match) return null;
+  const method = match[1].toUpperCase();
+  if (!VALID_HTTP_METHODS.has(method)) return null;
+  return { method, path: match[2] };
+}
+
+/**
+ * Convert a date + optional name into a valid TypeScript class name.
+ * Example: "2024-12-01" -> "V20241201Change"
+ *          "2024-12-01" + "Rename payment_method" -> "RenamePaymentMethod"
+ */
+function deriveClassName(date: string, explicitName?: string, description?: string): string {
+  if (explicitName) {
+    // Ensure first character is a letter
+    const cleaned = explicitName.replace(/[^A-Za-z0-9]/g, "");
+    if (cleaned && /^[A-Za-z]/.test(cleaned)) return cleaned;
+    return `V${cleaned || date.replace(/-/g, "")}Change`;
+  }
+  if (description) {
+    // PascalCase from description, max 40 chars
+    const words = description
+      .toLowerCase()
+      .replace(/[^a-z0-9\s]/g, " ")
+      .trim()
+      .split(/\s+/)
+      .filter((w) => w.length > 0 && !/^\d/.test(w))
+      .slice(0, 6);
+    if (words.length > 0) {
+      return words.map((w) => w[0].toUpperCase() + w.slice(1)).join("");
+    }
+  }
+  return `V${date.replace(/-/g, "")}Change`;
+}
+
+/**
+ * Collect all unique schema names referenced across all field specs so we
+ * can emit a single import statement for the user to fill in.
+ */
+function collectSchemaNames(
+  renames: RenameFieldSpec[],
+  adds: FieldSpec[],
+  removes: FieldSpec[],
+): string[] {
+  const set = new Set<string>();
+  for (const r of renames) set.add(r.schema);
+  for (const a of adds) set.add(a.schema);
+  for (const r of removes) set.add(r.schema);
+  return [...set].sort();
+}
+
+/**
+ * Generate the TypeScript source for a new VersionChange file. Pure function —
+ * no file I/O — so it can be tested independently.
+ */
+export function generateVersionChangeSource(
+  options: NewVersionOptions,
+): { className: string; source: string } {
+  const date = options.date;
+  const description =
+    options.description ?? `TODO: describe what changed in version ${date}`;
+  const className = deriveClassName(date, options.name, options.description);
+
+  const renames = (options.renameField ?? [])
+    .map(parseRenameFieldSpec)
+    .filter((s): s is RenameFieldSpec => s !== null);
+  const adds = (options.addField ?? [])
+    .map(parseFieldSpec)
+    .filter((s): s is FieldSpec => s !== null);
+  const removes = (options.removeField ?? [])
+    .map(parseFieldSpec)
+    .filter((s): s is FieldSpec => s !== null);
+  const addEndpoints = (options.addEndpoint ?? [])
+    .map(parseEndpointSpec)
+    .filter((s): s is EndpointSpec => s !== null);
+  const removeEndpoints = (options.removeEndpoint ?? [])
+    .map(parseEndpointSpec)
+    .filter((s): s is EndpointSpec => s !== null);
+
+  const schemaNames = collectSchemaNames(renames, adds, removes);
+  const hasSchemaInstructions =
+    renames.length > 0 || adds.length > 0 || removes.length > 0;
+  const hasEndpointInstructions =
+    addEndpoints.length > 0 || removeEndpoints.length > 0;
+  const hasAnyInstructions = hasSchemaInstructions || hasEndpointInstructions;
+  const hasMigrationCallbacks = renames.length > 0 || removes.length > 0;
+
+  const tsadwynImports: string[] = [
+    "VersionChange",
+  ];
+  if (hasSchemaInstructions) tsadwynImports.push("schema");
+  if (hasEndpointInstructions) tsadwynImports.push("endpoint");
+  if (hasMigrationCallbacks) {
+    tsadwynImports.push(
+      "convertRequestToNextVersionFor",
+      "convertResponseToPreviousVersionFor",
+      "RequestInfo",
+      "ResponseInfo",
+    );
+  }
+
+  const lines: string[] = [];
+
+  lines.push(`/**`);
+  lines.push(` * Version ${date}`);
+  lines.push(` *`);
+  const descLines = description.split("\n");
+  for (const dl of descLines) lines.push(` * ${dl}`);
+  lines.push(` *`);
+  lines.push(` * Next steps:`);
+  lines.push(` *   1. Fill in the migration instructions and callbacks below.`);
+  lines.push(` *   2. Import this class in your VersionBundle file.`);
+  lines.push(` *   3. Add \`new Version("${date}", ${className})\` to the bundle`);
+  lines.push(` *      (newest version first).`);
+  lines.push(` */`);
+  lines.push(`import { ${tsadwynImports.join(", ")} } from "tsadwyn";`);
+
+  if (schemaNames.length > 0) {
+    lines.push(
+      `import { ${schemaNames.join(", ")} } from "../schemas.js"; // TODO: adjust import path`,
+    );
+  }
+  if (hasMigrationCallbacks) {
+    lines.push(`import { z } from "zod";`);
+  }
+  lines.push(``);
+
+  lines.push(`export class ${className} extends VersionChange {`);
+  lines.push(`  description = ${JSON.stringify(description)};`);
+  lines.push(``);
+
+  if (hasAnyInstructions) {
+    lines.push(`  instructions = [`);
+    for (const r of renames) {
+      lines.push(
+        `    // In the previous version, ${r.schema}.${r.currentName} was called "${r.oldName}".`,
+      );
+      lines.push(
+        `    schema(${r.schema}).field(${JSON.stringify(r.currentName)}).had({ name: ${JSON.stringify(r.oldName)} }),`,
+      );
+    }
+    for (const a of adds) {
+      lines.push(
+        `    // ${a.schema}.${a.field} is new in this version — the previous version did not have it.`,
+      );
+      lines.push(
+        `    schema(${a.schema}).field(${JSON.stringify(a.field)}).didntExist,`,
+      );
+    }
+    for (const r of removes) {
+      lines.push(
+        `    // ${r.schema}.${r.field} was removed in this version — the previous version had it.`,
+      );
+      lines.push(
+        `    // TODO: replace z.unknown() with the actual Zod type the field used to have.`,
+      );
+      lines.push(
+        `    schema(${r.schema}).field(${JSON.stringify(r.field)}).existedAs({ type: z.unknown() }),`,
+      );
+    }
+    for (const e of addEndpoints) {
+      lines.push(
+        `    // ${e.method} ${e.path} is new in this version — the previous version did not have it.`,
+      );
+      lines.push(
+        `    endpoint(${JSON.stringify(e.path)}, [${JSON.stringify(e.method)}]).didntExist,`,
+      );
+    }
+    for (const e of removeEndpoints) {
+      lines.push(
+        `    // ${e.method} ${e.path} was removed in this version — the previous version had it.`,
+      );
+      lines.push(
+        `    endpoint(${JSON.stringify(e.path)}, [${JSON.stringify(e.method)}]).existed,`,
+      );
+    }
+    lines.push(`  ];`);
+  } else {
+    lines.push(`  instructions = [`);
+    lines.push(`    // TODO: add schema() / endpoint() instructions here.`);
+    lines.push(`    //   schema(MySchema).field("name").had({ name: "oldName" }),`);
+    lines.push(`    //   endpoint("/users/:id", ["DELETE"]).didntExist,`);
+    lines.push(`  ];`);
+  }
+  lines.push(``);
+
+  // Emit migration callback stubs for each rename.
+  // The old version uses `oldName`; the head (latest) version uses `currentName`.
+  // Request migration: old client sends `oldName` -> rename to `currentName` for the handler.
+  // Response migration: handler returns `currentName` -> rename back to `oldName` for the old client.
+  for (const r of renames) {
+    const sanitize = (s: string) => s.replace(/[^A-Za-z0-9]/g, "_");
+    const methodSuffix = `${sanitize(r.schema)}_${sanitize(r.currentName)}`;
+    lines.push(`  // Request migration: old version sends "${r.oldName}", rename to "${r.currentName}".`);
+    lines.push(`  migrateRequest_${methodSuffix} = convertRequestToNextVersionFor(${r.schema})(`);
+    lines.push(`    (request: RequestInfo) => {`);
+    lines.push(`      if (${JSON.stringify(r.oldName)} in request.body) {`);
+    lines.push(`        request.body[${JSON.stringify(r.currentName)}] = request.body[${JSON.stringify(r.oldName)}];`);
+    lines.push(`        delete request.body[${JSON.stringify(r.oldName)}];`);
+    lines.push(`      }`);
+    lines.push(`    },`);
+    lines.push(`  );`);
+    lines.push(``);
+    lines.push(`  // Response migration: head returns "${r.currentName}", rename back to "${r.oldName}" for old version.`);
+    lines.push(`  migrateResponse_${methodSuffix} = convertResponseToPreviousVersionFor(${r.schema})(`);
+    lines.push(`    (response: ResponseInfo) => {`);
+    lines.push(`      if (${JSON.stringify(r.currentName)} in response.body) {`);
+    lines.push(`        response.body[${JSON.stringify(r.oldName)}] = response.body[${JSON.stringify(r.currentName)}];`);
+    lines.push(`        delete response.body[${JSON.stringify(r.currentName)}];`);
+    lines.push(`      }`);
+    lines.push(`    },`);
+    lines.push(`  );`);
+    lines.push(``);
+  }
+
+  for (const r of removes) {
+    const sanitize = (s: string) => s.replace(/[^A-Za-z0-9]/g, "_");
+    const methodSuffix = `${sanitize(r.schema)}_${sanitize(r.field)}`;
+    lines.push(`  // Response migration: head dropped ${r.field}, but old version still expects it.`);
+    lines.push(`  // TODO: compute a sensible value for ${r.field} from the remaining response fields.`);
+    lines.push(`  migrateResponse_${methodSuffix} = convertResponseToPreviousVersionFor(${r.schema})(`);
+    lines.push(`    (response: ResponseInfo) => {`);
+    lines.push(`      response.body[${JSON.stringify(r.field)}] = null; // TODO: replace with real value`);
+    lines.push(`    },`);
+    lines.push(`  );`);
+    lines.push(``);
+  }
+
+  lines.push(`}`);
+  lines.push(``);
+
+  return { className, source: lines.join("\n") };
+}
+
+/**
+ * Run the `new version` command: scaffold a new VersionChange file.
+ *
+ * Writes to disk unless `dryRun` is set. Returns a CommandResult whose output
+ * includes the generated file path and next-step instructions.
+ */
+export async function runNewVersion(options: NewVersionOptions): Promise<CommandResult> {
+  const output: string[] = [];
+
+  // Validate date
+  if (!options.date || !ISO_DATE_REGEX.test(options.date)) {
+    output.push(
+      `Error: --date must be an ISO date string (YYYY-MM-DD). Got: "${options.date ?? "(missing)"}"`,
+    );
+    return { exitCode: 1, output };
+  }
+
+  // Validate any rename/add/remove/endpoint specs early so users get clear errors
+  for (const spec of options.renameField ?? []) {
+    if (!parseRenameFieldSpec(spec)) {
+      output.push(
+        `Error: --rename-field must be "Schema.currentName=oldName" ` +
+        `(e.g. "ChargeResource.payment_source=payment_method"). Got: "${spec}"`,
+      );
+      return { exitCode: 1, output };
+    }
+  }
+  for (const spec of options.addField ?? []) {
+    if (!parseFieldSpec(spec)) {
+      output.push(`Error: --add-field must be "Schema.field". Got: "${spec}"`);
+      return { exitCode: 1, output };
+    }
+  }
+  for (const spec of options.removeField ?? []) {
+    if (!parseFieldSpec(spec)) {
+      output.push(`Error: --remove-field must be "Schema.field". Got: "${spec}"`);
+      return { exitCode: 1, output };
+    }
+  }
+  for (const spec of options.addEndpoint ?? []) {
+    if (!parseEndpointSpec(spec)) {
+      output.push(
+        `Error: --add-endpoint must be "METHOD /path" (e.g. "POST /users"). Got: "${spec}"`,
+      );
+      return { exitCode: 1, output };
+    }
+  }
+  for (const spec of options.removeEndpoint ?? []) {
+    if (!parseEndpointSpec(spec)) {
+      output.push(
+        `Error: --remove-endpoint must be "METHOD /path" (e.g. "DELETE /users/:id"). Got: "${spec}"`,
+      );
+      return { exitCode: 1, output };
+    }
+  }
+
+  const { className, source } = generateVersionChangeSource(options);
+  const dir = options.dir ?? "./src/versions";
+  const absDir = resolve(process.cwd(), dir);
+  const absFile = join(absDir, `${options.date}.ts`);
+  const relFile = join(dir, `${options.date}.ts`);
+
+  if (options.dryRun) {
+    output.push(`# Dry run — file would be written to: ${relFile}`);
+    output.push(`# Class name: ${className}`);
+    output.push(``);
+    output.push(source);
+    return { exitCode: 0, output };
+  }
+
+  // Check for existing file
+  if (existsSync(absFile) && !options.force) {
+    output.push(
+      `Error: File already exists at ${relFile}. Use --force to overwrite.`,
+    );
+    return { exitCode: 1, output };
+  }
+
+  // Create directory if missing
+  try {
+    if (!existsSync(absDir)) {
+      mkdirSync(absDir, { recursive: true });
+      output.push(`Created directory: ${dir}`);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.push(`Error creating directory ${dir}: ${message}`);
+    return { exitCode: 1, output };
+  }
+
+  // Write file
+  try {
+    writeFileSync(absFile, source, "utf-8");
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    output.push(`Error writing file ${relFile}: ${message}`);
+    return { exitCode: 1, output };
+  }
+
+  output.push(`Created new version file: ${relFile}`);
+  output.push(``);
+  output.push(`Next steps:`);
+  output.push(`  1. Edit ${relFile} to fill in the migration details.`);
+  output.push(`  2. In your VersionBundle file, add the import:`);
+  output.push(`       import { ${className} } from "./versions/${options.date}.js";`);
+  output.push(`  3. Add the new Version to your VersionBundle (newest first):`);
+  output.push(`       new VersionBundle(`);
+  output.push(`         new Version("${options.date}", ${className}),   // <-- add this line`);
+  output.push(`         // ... existing versions ...`);
+  output.push(`       )`);
+  output.push(``);
+  output.push(`Remember: tsadwyn versions are sorted newest-first.`);
+
+  return { exitCode: 0, output };
+}
+
 /**
  * Pipe a CommandResult's output lines through a Commander command, writing to
  * stdout on success and stderr on failure. On failure, throw a CommanderError
@@ -387,6 +838,62 @@ export function createProgram(): Command {
         json: options.json,
       });
       emitResult(cmd, result, "tsadwyn.infoFailed");
+    });
+
+  // ─────────────────────────────────────────────────────────────────────
+  // `new` — scaffolding subcommands
+  // ─────────────────────────────────────────────────────────────────────
+  const newCmd = cmd
+    .command("new")
+    .description("Scaffold new tsadwyn resources");
+
+  newCmd
+    .command("version")
+    .description(
+      "Scaffold a new VersionChange file for a breaking API change. " +
+      "Creates a ready-to-edit TypeScript file with imports, class structure, " +
+      "and optional pre-populated migration instructions.",
+    )
+    .requiredOption("--date <YYYY-MM-DD>", "ISO date for the new version")
+    .option("--description <text>", "Human-readable description of what changed")
+    .option("--dir <path>", "Output directory for the generated file", "./src/versions")
+    .option("--name <ClassName>", "Override the VersionChange class name")
+    .option(
+      "--rename-field <spec>",
+      'Pre-populate a field rename: "Schema.newName=oldName" — ' +
+      "the field is currently called 'newName' in the head schema and was called 'oldName' in the previous version. " +
+      "Can be repeated.",
+      (value: string, previous: string[] | undefined) => (previous ?? []).concat([value]),
+    )
+    .option(
+      "--add-field <spec>",
+      'Pre-populate a field addition: "Schema.field" — ' +
+      "the field is new in this version (previous version did not have it). Can be repeated.",
+      (value: string, previous: string[] | undefined) => (previous ?? []).concat([value]),
+    )
+    .option(
+      "--remove-field <spec>",
+      'Pre-populate a field removal: "Schema.field" — ' +
+      "the field was removed in this version (previous version had it). Can be repeated.",
+      (value: string, previous: string[] | undefined) => (previous ?? []).concat([value]),
+    )
+    .option(
+      "--add-endpoint <spec>",
+      'Pre-populate an endpoint addition: "METHOD /path" (e.g. "POST /users"). ' +
+      "Endpoint is new in this version. Can be repeated.",
+      (value: string, previous: string[] | undefined) => (previous ?? []).concat([value]),
+    )
+    .option(
+      "--remove-endpoint <spec>",
+      'Pre-populate an endpoint removal: "METHOD /path" (e.g. "DELETE /users/:id"). ' +
+      "Endpoint was removed in this version. Can be repeated.",
+      (value: string, previous: string[] | undefined) => (previous ?? []).concat([value]),
+    )
+    .option("--dry-run", "Print the generated file content without writing to disk")
+    .option("--force", "Overwrite an existing file at the target path")
+    .action(async (options: NewVersionOptions) => {
+      const result = await runNewVersion(options);
+      emitResult(cmd, result, "tsadwyn.newVersionFailed");
     });
 
   return cmd;
