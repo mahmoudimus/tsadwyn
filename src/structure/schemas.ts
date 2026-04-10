@@ -525,7 +525,20 @@ export class AlterFieldInstructionFactory {
  * Factory for creating schema alteration instructions.
  */
 export class AlterSchemaInstructionFactory {
-  constructor(public readonly schemaName: string) {}
+  /** The original Zod schema object, stored for registry discovery. */
+  readonly _zodSchema: ZodTypeAny;
+
+  /**
+   * T-2400: Global map of schema names to their Zod schema objects,
+   * populated each time `schema()` is called. Used by route generation
+   * to discover schemas referenced in instructions but not directly on routes.
+   */
+  static readonly _knownSchemas: Map<string, ZodTypeAny> = new Map();
+
+  constructor(public readonly schemaName: string, zodSchema: ZodTypeAny) {
+    this._zodSchema = zodSchema;
+    AlterSchemaInstructionFactory._knownSchemas.set(schemaName, zodSchema);
+  }
 
   /**
    * Target a specific field for alteration.
@@ -638,5 +651,5 @@ export function schema(
       "Schema must have a name. Use `.named('SchemaName')` on the Zod schema.",
     );
   }
-  return new AlterSchemaInstructionFactory(name);
+  return new AlterSchemaInstructionFactory(name, zodSchema);
 }

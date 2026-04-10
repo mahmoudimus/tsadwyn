@@ -33,15 +33,24 @@ import {
 // ---------------------------------------------------------------------------
 
 describe("T-1600: unregistered schema in schema instructions", () => {
-  it("throws InvalidGenerationInstructionError when a schema instruction targets an unregistered schema", () => {
-    // Create a schema that is referenced in instructions but NOT used on any route
-    const UnusedSchema = z.object({ name: z.string() }).named("T1600_UnusedSchema");
+  it("throws InvalidGenerationInstructionError when a schema instruction targets a truly unknown schema", () => {
+    // Create an instruction that references a schema name that was never
+    // passed to schema() and never put on a route — a truly unknown name.
     const UsedSchema = z.object({ value: z.string() }).named("T1600_UsedSchema");
 
     class BadChange extends VersionChange {
-      description = "References a schema not on any route";
+      description = "References a schema that doesn't exist anywhere";
+      // Manually craft an instruction with a name that was never registered
       instructions = [
-        schema(UnusedSchema).field("name").had({ name: "old_name" }),
+        {
+          kind: "field_had" as const,
+          schemaName: "T1600_CompletelyUnknownSchema",
+          fieldName: "name",
+          oldName: "old_name",
+          oldType: undefined,
+          isHiddenFromChangelog: false,
+          hasDefault: false,
+        },
       ];
     }
 
@@ -61,6 +70,34 @@ describe("T-1600: unregistered schema in schema instructions", () => {
     expect(() => app.generateAndIncludeVersionedRouters(router)).toThrow(
       InvalidGenerationInstructionError,
     );
+  });
+
+  it("auto-discovers schemas referenced via schema() even if not on a route (T-2400)", () => {
+    // schema() was called with this Zod object, so it IS known — should NOT throw
+    const NestedSchema = z.object({ name: z.string() }).named("T1600_NestedSchema");
+    const UsedSchema = z.object({ value: z.string() }).named("T1600_UsedSchema2");
+
+    class GoodChange extends VersionChange {
+      description = "References a schema via schema() DSL";
+      instructions = [
+        schema(NestedSchema).field("name").had({ name: "old_name" }),
+      ];
+    }
+
+    const router = new VersionedRouter();
+    router.get("/items", null, UsedSchema, async () => {
+      return { value: "hello" };
+    });
+
+    const app = new Cadwyn({
+      versions: new VersionBundle(
+        new Version("2001-01-01", GoodChange),
+        new Version("2000-01-01"),
+      ),
+    });
+
+    // Should NOT throw — schema is discovered from the instruction via T-2400
+    expect(() => app.generateAndIncludeVersionedRouters(router)).not.toThrow();
   });
 });
 

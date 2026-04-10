@@ -11,6 +11,7 @@ import {
 } from "./middleware.js";
 import { generateVersionedRouters } from "./route-generation.js";
 import { CadwynStructureError } from "./exceptions.js";
+import { AlterSchemaInstructionFactory } from "./structure/schemas.js";
 import { buildOpenAPIDocument } from "./openapi.js";
 import type { OpenAPIDocument } from "./openapi.js";
 import { generateChangelog } from "./changelog.js";
@@ -718,6 +719,30 @@ export class Cadwyn {
         );
       }
     }
+
+    // T-2400: Also discover schemas from version change instructions
+    const knownSchemas = AlterSchemaInstructionFactory._knownSchemas;
+    for (const version of this.versions.versions) {
+      for (const change of version.changes) {
+        for (const instr of change._alterSchemaInstructions) {
+          const name = (instr as any).schemaName as string | undefined;
+          if (name && !registry.has(name) && knownSchemas.has(name)) {
+            registry.register(name, knownSchemas.get(name)!);
+          }
+        }
+      }
+    }
+    if (this.versions.headVersion) {
+      for (const change of this.versions.headVersion.changes) {
+        for (const instr of change._alterSchemaInstructions) {
+          const name = (instr as any).schemaName as string | undefined;
+          if (name && !registry.has(name) && knownSchemas.has(name)) {
+            registry.register(name, knownSchemas.get(name)!);
+          }
+        }
+      }
+    }
+
     return registry;
   }
 

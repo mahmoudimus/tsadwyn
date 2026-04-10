@@ -30,14 +30,21 @@ import {
   HttpError,
 } from "./exceptions.js";
 import { getSchemaName } from "./zod-extend.js";
+import { AlterSchemaInstructionFactory } from "./structure/schemas.js";
 
 /**
- * Build a ZodSchemaRegistry from the route definitions.
- * Collects all named Zod schemas used in request/response positions.
+ * Build a ZodSchemaRegistry from the route definitions AND from schemas
+ * referenced in version change instructions (T-2400). This ensures schemas
+ * that appear only in `alter_schema_instructions` (e.g., nested schemas not
+ * directly on a route) are also registered and versioned.
  */
-function buildRegistryFromRoutes(routes: RouteDefinition[]): ZodSchemaRegistry {
+function buildRegistryFromRoutes(
+  routes: RouteDefinition[],
+  versions?: VersionBundle,
+): ZodSchemaRegistry {
   const registry = new ZodSchemaRegistry();
 
+  // Register schemas from routes
   for (const route of routes) {
     const reqName = getSchemaName(route.requestSchema);
     if (reqName) {
@@ -46,6 +53,36 @@ function buildRegistryFromRoutes(routes: RouteDefinition[]): ZodSchemaRegistry {
     const resName = getSchemaName(route.responseSchema);
     if (resName) {
       registry.register(resName, route.responseSchema!);
+    }
+  }
+
+  // T-2400: Register schemas referenced in version change instructions
+  // but not directly on any route. Uses the static _knownSchemas map
+  // populated by `schema()` calls.
+  if (versions) {
+    const knownSchemas = AlterSchemaInstructionFactory._knownSchemas;
+
+    for (const version of versions.versions) {
+      for (const change of version.changes) {
+        for (const instr of change._alterSchemaInstructions) {
+          const name = (instr as any).schemaName as string | undefined;
+          if (name && !registry.has(name) && knownSchemas.has(name)) {
+            registry.register(name, knownSchemas.get(name)!);
+          }
+        }
+      }
+    }
+
+    // Also check HeadVersion changes if present
+    if (versions.headVersion) {
+      for (const change of versions.headVersion.changes) {
+        for (const instr of change._alterSchemaInstructions) {
+          const name = (instr as any).schemaName as string | undefined;
+          if (name && !registry.has(name) && knownSchemas.has(name)) {
+            registry.register(name, knownSchemas.get(name)!);
+          }
+        }
+      }
     }
   }
 
@@ -496,7 +533,7 @@ export function generateVersionedRouters(
   // T-1604: Validate path-based converter usage against all routes
   validatePathConverterUsage(versions, allRoutes);
 
-  const baseRegistry = buildRegistryFromRoutes(allRoutes);
+  const baseRegistry = buildRegistryFromRoutes(allRoutes, versions);
   const versionedSchemas = generateVersionedSchemas(versions, baseRegistry);
   const result = new Map<string, Router>();
   const versionedRoutes = new Map<string, RouteDefinition[]>();
