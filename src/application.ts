@@ -498,9 +498,15 @@ export class Cadwyn {
   private _performInitialization(): void {
     if (this._initialized || !this._pendingRouters) return;
 
-    const mergedRouter = {
-      routes: this._pendingRouters.flatMap((r) => r.routes),
-    } as VersionedRouter;
+    // Build a real VersionedRouter that preserves router-level middleware
+    // from all pending routers (fixes bug where .use() was silently dropped).
+    const mergedRouter = new VersionedRouter();
+    for (const r of this._pendingRouters) {
+      mergedRouter.routes.push(...r.routes);
+      for (const mw of r.routerMiddleware) {
+        mergedRouter.use(mw);
+      }
+    }
 
     // Store routes for OpenAPI generation
     this._routes = mergedRouter.routes;

@@ -973,14 +973,34 @@ function createVersionedHandler(
         }
         body = requestInfo.body;
 
-        // T-405: Apply header changes back to the Express request
+        // T-405: Apply header changes back to the Express request.
+        // Both additions/updates AND deletions are propagated.
+        const originalHeaderKeys = new Set(Object.keys(req.headers));
+        const migratedHeaderKeys = new Set(
+          Object.keys(requestInfo.headers).map((k) => k.toLowerCase()),
+        );
+        // Set migrated values
         for (const [key, value] of Object.entries(requestInfo.headers)) {
           req.headers[key.toLowerCase()] = value;
         }
+        // Delete headers that were removed during migration
+        for (const key of originalHeaderKeys) {
+          if (!migratedHeaderKeys.has(key.toLowerCase())) {
+            delete req.headers[key];
+          }
+        }
 
-        // T-405: Apply query param changes back
+        // T-405: Apply query param changes back.
+        // Both additions/updates AND deletions are propagated.
+        const originalQueryKeys = new Set(Object.keys(req.query as any));
+        const migratedQueryKeys = new Set(Object.keys(requestInfo.queryParams));
         for (const [key, value] of Object.entries(requestInfo.queryParams)) {
           (req.query as any)[key] = value;
+        }
+        for (const key of originalQueryKeys) {
+          if (!migratedQueryKeys.has(key)) {
+            delete (req.query as any)[key];
+          }
         }
 
         // T-405: Apply cookie changes back (rebuild the cookie header)

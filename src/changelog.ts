@@ -1,9 +1,22 @@
 import type { VersionBundle, VersionChange } from "./structure/versions.js";
 import { VersionChangeWithSideEffects } from "./structure/versions.js";
 import type { AlterSchemaSubInstruction, HiddenFromChangelogMixin } from "./structure/schemas.js";
+import { AlterSchemaInstructionFactory } from "./structure/schemas.js";
 import type { AlterEndpointSubInstruction } from "./structure/endpoints.js";
 import type { AlterEnumSubInstruction } from "./structure/enums.js";
+import { ZodObject } from "zod";
+import type { ZodTypeAny } from "zod";
 import { zodToJsonSchema } from "zod-to-json-schema";
+
+/**
+ * Look up the current (head version) Zod type of a named schema's field.
+ */
+function _getCurrentFieldType(schemaName: string, fieldName: string): ZodTypeAny | null {
+  const zodSchema = AlterSchemaInstructionFactory._knownSchemas.get(schemaName);
+  if (!zodSchema || !(zodSchema instanceof ZodObject)) return null;
+  const shape = (zodSchema as ZodObject<any>).shape;
+  return (shape?.[fieldName] as ZodTypeAny | undefined) ?? null;
+}
 
 // ── Changelog resource types ────────────────────────────────────────────────
 
@@ -61,14 +74,14 @@ export type ChangelogInstruction =
       attributeChanges: ChangelogAttributeChange[];
     }
   | {
-      type: "enum.members.changed";
+      type: "enum.members.added";
       enum: string;
-      members: Record<string, string>;
+      members: string[];
     }
   | {
       type: "enum.members.removed";
       enum: string;
-      members: string[];
+      members: Record<string, unknown>;
     };
 
 export interface ChangelogVersionChange {
@@ -138,6 +151,16 @@ function convertSchemaInstruction(instruction: AlterSchemaSubInstruction): Chang
         delete oldJsonSchema["$schema"];
       } catch {
         // fall back to null
+      }
+      // Look up the current type from the head schema registry
+      const currentType = _getCurrentFieldType(instruction.schemaName, instruction.fieldName);
+      if (currentType) {
+        try {
+          newJsonSchema = zodToJsonSchema(currentType, { target: "openApi3" });
+          delete newJsonSchema["$schema"];
+        } catch {
+          // fall back to null
+        }
       }
       changes.push({
         name: "type",
@@ -375,17 +398,21 @@ function convertEndpointInstruction(instruction: AlterEndpointSubInstruction): C
  * Convert an enum alteration instruction to a changelog entry.
  */
 function convertEnumInstruction(instruction: AlterEnumSubInstruction): ChangelogInstruction | null {
+  // `enum().had({member: value})` means the OLD version had this member.
+  // Going old -> new, the member was REMOVED in the new version.
   if (instruction.kind === "enum_had_members") {
     return {
-      type: "enum.members.changed",
+      type: "enum.members.removed",
       enum: instruction.enumName,
       members: instruction.members,
     };
   }
 
+  // `enum().didntHave("member")` means the OLD version didn't have this member.
+  // Going old -> new, the member was ADDED in the new version.
   if (instruction.kind === "enum_didnt_have_members") {
     return {
-      type: "enum.members.removed",
+      type: "enum.members.added",
       enum: instruction.enumName,
       members: instruction.members,
     };
