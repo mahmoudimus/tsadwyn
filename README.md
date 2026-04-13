@@ -239,6 +239,27 @@ After scaffolding, the CLI prints a "Next steps" box with the exact `import` and
 
 **Known limitation:** `--remove-field` emits `existedAs({ type: z.unknown() })` with a TODO comment because the CLI doesn't parse your source to infer the field's real Zod type. Fill it in manually with the correct type (e.g. `z.string()`, `z.number().int()`). A future release will parse your schemas file via the TypeScript compiler API to emit the exact type automatically. Same caveat applies to `--add-field` when generating a default-value callback.
 
+## Development
+
+Clone, install, test:
+
+```bash
+npm ci
+npm test         # vitest run
+npm run typecheck
+npm run build
+```
+
+### Test pool
+
+Vitest defaults to `pool: "forks"` in this repo because supertest-heavy suites are flaky under `threads` due to shared Node HTTP keep-alive parser state (~20–30% per-file flake rate observed vs. 0% with forks). To validate behavior under the threads pool anyway:
+
+```bash
+TSADWYN_TEST_POOL=threads npm test
+```
+
+Vitest will print a warning and run under the legacy pool. The standard `npx vitest run --pool=threads` CLI override also works and takes precedence over the env var.
+
 ## License
 
 MIT
