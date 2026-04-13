@@ -21,7 +21,7 @@ import request from "supertest";
 import { z } from "zod";
 
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -64,7 +64,7 @@ describe("Section 1: path-based converter validation", () => {
     const router = new VersionedRouter();
     router.get("/users", null, Res, async () => ({ ok: true }));
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -92,7 +92,7 @@ describe("Section 1: path-based converter validation", () => {
     const router = new VersionedRouter();
     router.get("/users", null, Res, async () => ({ ok: true }));
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -120,7 +120,7 @@ describe("Section 1: path-based converter validation", () => {
     const router = new VersionedRouter();
     router.get("/users", null, Res, async () => ({ ok: true }));
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -148,7 +148,7 @@ describe("Section 1: path-based converter validation", () => {
     const router = new VersionedRouter();
     router.get("/users", null, Res, async () => ({ ok: true }));
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -183,7 +183,7 @@ describe("Section 1: path-based converter validation", () => {
     const router = new VersionedRouter();
     router.get("/widgets", null, Res, async () => ({ ok: true }));
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -210,7 +210,7 @@ describe("Section 2: endpoint_didntExist error paths", () => {
     const router = new VersionedRouter();
     router.get("/real", null, Res, async () => ({ ok: true }));
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -240,7 +240,7 @@ describe("Section 2: endpoint_didntExist error paths", () => {
     const router = new VersionedRouter();
     router.get("/gone", null, Res, async () => ({ ok: true }));
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2002-01-01", DeleteFirst),
         new Version("2001-01-01", DeleteAgain),
@@ -268,7 +268,7 @@ describe("Section 2: endpoint_didntExist error paths", () => {
     router.get("/temp", null, Res, async () => ({ ok: true }));
     router.get("/kept", null, Res, async () => ({ ok: true }));
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -321,7 +321,7 @@ describe("Section 3: endpoint_existed error paths", () => {
     const router = new VersionedRouter();
     router.get("/alive", null, Res, async () => ({ ok: true }));
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -349,7 +349,7 @@ describe("Section 3: endpoint_existed error paths", () => {
     const Res = z.object({ ok: z.boolean() }).named(uniq("S3c_Res"));
     router.get("/other", null, Res, async () => ({ ok: true }));
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -379,7 +379,7 @@ describe("Section 3: endpoint_existed error paths", () => {
       instructions = [endpoint("/dup", ["GET"]).existed];
     }
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", RestoreAmbiguous),
         new Version("2000-01-01"),
@@ -410,7 +410,7 @@ describe("Section 3: endpoint_existed error paths", () => {
       instructions = [endpoint("/dup2", ["GET"], "beta").existed];
     }
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", RestoreAlpha, RestoreBeta),
         new Version("2000-01-01"),
@@ -435,7 +435,7 @@ describe("Section 4: endpoint().had() no-op detection per attribute", () => {
       instructions = [instruction];
     }
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", NoOp),
         new Version("2000-01-01"),
@@ -538,7 +538,7 @@ describe("Section 4: endpoint().had() no-op detection per attribute", () => {
       ];
     }
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", MixedChange),
         new Version("2000-01-01"),
@@ -568,7 +568,7 @@ describe("Section 4b: endpoint().had() successful apply per attribute", () => {
       instructions = [instruction];
     }
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", ApplyChange),
         new Version("2000-01-01"),
@@ -693,7 +693,7 @@ describe("Section 4b: endpoint().had() successful apply per attribute", () => {
       instructions = [endpoint("/m-noop", ["GET"]).had({ methods: ["GET"] })];
     }
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", NoOp),
         new Version("2000-01-01"),
@@ -716,7 +716,7 @@ describe("Section 4b: endpoint().had() successful apply per attribute", () => {
       instructions = [endpoint("/p-noop", ["GET"]).had({ path: "/p-noop" })];
     }
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", NoOp),
         new Version("2000-01-01"),
@@ -747,7 +747,7 @@ describe("Section 5: endpoint().had({ path }) path-param validation", () => {
       ];
     }
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -782,7 +782,7 @@ describe("Section 5: endpoint().had({ path }) path-param validation", () => {
       ];
     }
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -809,7 +809,7 @@ describe("Section 5: endpoint().had({ path }) path-param validation", () => {
       ];
     }
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -832,7 +832,7 @@ describe("Section 5: endpoint().had({ path }) path-param validation", () => {
       ];
     }
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -871,7 +871,7 @@ describe("Section 6: multipart/form-data request migration", () => {
     const router = new VersionedRouter();
     router.post("/upload-text", null, Res, async () => ({ ok: true }));
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -918,7 +918,7 @@ describe("Section 6: multipart/form-data request migration", () => {
       return { ok: true };
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -961,7 +961,7 @@ describe("Section 6: multipart/form-data request migration", () => {
       name: String(req.body?.name ?? ""),
     }));
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -990,7 +990,7 @@ describe("Section 7: string response migration path", () => {
       return JSON.stringify({ foo: "bar" });
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(new Version("2000-01-01")),
     });
     app.generateAndIncludeVersionedRouters(router);
@@ -1028,7 +1028,7 @@ describe("Section 7: string response migration path", () => {
       return JSON.stringify({ foo: "bar" }) as any;
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -1049,7 +1049,7 @@ describe("Section 7: string response migration path", () => {
     const router = new VersionedRouter();
     router.get("/str-plain-nomig", null, null, async () => "hello world");
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(new Version("2000-01-01")),
     });
     app.generateAndIncludeVersionedRouters(router);
@@ -1084,7 +1084,7 @@ describe("Section 7: string response migration path", () => {
     const router = new VersionedRouter();
     router.get("/str-plain-mig", null, Res, async () => "not-json-at-all" as any);
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -1124,7 +1124,7 @@ describe("Section 8: HttpError migration edge cases", () => {
       );
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", NoMigration),
         new Version("2000-01-01"),
@@ -1163,7 +1163,7 @@ describe("Section 8: HttpError migration edge cases", () => {
       throw new HttpError(418, { msg: "teapot" });
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -1200,7 +1200,7 @@ describe("Section 8: HttpError migration edge cases", () => {
       throw new HttpError(404, { msg: "not found" });
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", ChangeStatus),
         new Version("2000-01-01"),
@@ -1234,7 +1234,7 @@ describe("Section 8: HttpError migration edge cases", () => {
       throw new HttpError(500, { msg: "boom" });
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", AddCookie),
         new Version("2000-01-01"),
@@ -1274,7 +1274,7 @@ describe("Section 8: HttpError migration edge cases", () => {
       throw new Error("this is a plain error, not HttpError");
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),

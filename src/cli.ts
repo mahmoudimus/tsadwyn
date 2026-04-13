@@ -10,7 +10,7 @@
  *
  * Commands:
  *   codegen - Dynamically imports the module specified by --app, looks for a
- *             default or named `app` export that is a Cadwyn instance, calls
+ *             default or named `app` export that is a Tsadwyn instance, calls
  *             app.generateAndIncludeVersionedRouters() to trigger generation,
  *             and prints a summary of generated versions and routes.
  *
@@ -55,11 +55,11 @@ async function loadAppModule(appPath: string): Promise<any> {
 }
 
 /**
- * Extract the Cadwyn `app` instance from a loaded module, checking the default
+ * Extract the Tsadwyn `app` instance from a loaded module, checking the default
  * export first and then the named `app` export.
  *
- * Returns `null` if the module does not export a Cadwyn app in either slot, or
- * if the exported value does not look like a Cadwyn instance (missing the
+ * Returns `null` if the module does not export a Tsadwyn app in either slot, or
+ * if the exported value does not look like a Tsadwyn instance (missing the
  * `generateAndIncludeVersionedRouters` method).
  */
 function resolveAppInstance(mod: any): any | null {
@@ -97,7 +97,7 @@ export async function runCodegen(options: CodegenOptions): Promise<CommandResult
     const app = mod?.default ?? mod?.app;
     if (!app) {
       output.push(
-        "Error: Could not find a Cadwyn app export. " +
+        "Error: Could not find a Tsadwyn app export. " +
         "The module should have a default export or a named 'app' export.",
       );
       return { exitCode: 1, output };
@@ -105,7 +105,7 @@ export async function runCodegen(options: CodegenOptions): Promise<CommandResult
 
     if (typeof app.generateAndIncludeVersionedRouters !== "function") {
       output.push(
-        "Error: The exported object does not appear to be a Cadwyn instance. " +
+        "Error: The exported object does not appear to be a Tsadwyn instance. " +
         "It must have a generateAndIncludeVersionedRouters() method.",
       );
       return { exitCode: 1, output };
@@ -183,7 +183,7 @@ export interface InfoPayload {
 }
 
 /**
- * Build an InfoPayload from a Cadwyn app instance. Extracted from runInfo so
+ * Build an InfoPayload from a Tsadwyn app instance. Extracted from runInfo so
  * the rendering logic can be unit-tested independently of module loading.
  */
 function buildInfoPayload(app: any, onlyVersion?: string): InfoPayload {
@@ -281,9 +281,9 @@ export async function runInfo(options: InfoOptions): Promise<CommandResult> {
 
     if (!app) {
       output.push(
-        "Error: Could not find a Cadwyn app export. " +
+        "Error: Could not find a Tsadwyn app export. " +
         "The module should have a default export or a named 'app' export " +
-        "that is a Cadwyn instance.",
+        "that is a Tsadwyn instance.",
       );
       return { exitCode: 1, output };
     }
@@ -814,8 +814,8 @@ export function createProgram(): Command {
 
   cmd
     .command("codegen")
-    .description("Generate versioned routers from a Cadwyn application module")
-    .requiredOption("--app <path>", "Path to the module that exports the Cadwyn app")
+    .description("Generate versioned routers from a Tsadwyn application module")
+    .requiredOption("--app <path>", "Path to the module that exports the Tsadwyn app")
     .action(async (options: CodegenOptions) => {
       const result = await runCodegen(options);
       emitResult(cmd, result, "tsadwyn.codegenFailed");
@@ -824,7 +824,7 @@ export function createProgram(): Command {
   cmd
     .command("info")
     .description("Print structured info about the app's versions and routes")
-    .requiredOption("--app <path>", "Path to the module that exports the Cadwyn app")
+    .requiredOption("--app <path>", "Path to the module that exports the Tsadwyn app")
     .option(
       "--api-version <value>",
       "Show info for a single API version only (use this instead of --version " +

@@ -10,10 +10,10 @@
 import { describe, it, expect } from "vitest";
 
 import {
-  CadwynError,
-  CadwynStructureError,
-  CadwynLatestRequestValidationError,
-  CadwynHeadRequestValidationError,
+  TsadwynError,
+  TsadwynStructureError,
+  TsadwynLatestRequestValidationError,
+  TsadwynHeadRequestValidationError,
   LintingError,
   RouterGenerationError,
   RouteAlreadyExistsError,
@@ -31,11 +31,11 @@ import {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("Section 1: exception classes basic behavior", () => {
-  it("CadwynError — preserves name, message, stack, and prototype chain", () => {
-    const err = new CadwynError("base error");
-    expect(err).toBeInstanceOf(CadwynError);
+  it("TsadwynError — preserves name, message, stack, and prototype chain", () => {
+    const err = new TsadwynError("base error");
+    expect(err).toBeInstanceOf(TsadwynError);
     expect(err).toBeInstanceOf(Error);
-    expect(err.name).toBe("CadwynError");
+    expect(err.name).toBe("TsadwynError");
     expect(err.message).toBe("base error");
     expect(err.stack).toBeDefined();
     expect(typeof err.stack).toBe("string");
@@ -46,43 +46,43 @@ describe("Section 1: exception classes basic behavior", () => {
     } catch (e) {
       caught = e;
     }
-    expect(caught).toBeInstanceOf(CadwynError);
+    expect(caught).toBeInstanceOf(TsadwynError);
   });
 
-  it("CadwynError — no-arg constructor still works", () => {
-    const err = new CadwynError();
-    expect(err).toBeInstanceOf(CadwynError);
-    expect(err.name).toBe("CadwynError");
+  it("TsadwynError — no-arg constructor still works", () => {
+    const err = new TsadwynError();
+    expect(err).toBeInstanceOf(TsadwynError);
+    expect(err.name).toBe("TsadwynError");
     // message is either undefined or the empty string depending on runtime
     expect(err.message === "" || err.message === undefined).toBe(true);
   });
 
-  it("CadwynStructureError — extends CadwynError", () => {
-    const err = new CadwynStructureError("structure bad");
-    expect(err).toBeInstanceOf(CadwynStructureError);
-    expect(err).toBeInstanceOf(CadwynError);
+  it("TsadwynStructureError — extends TsadwynError", () => {
+    const err = new TsadwynStructureError("structure bad");
+    expect(err).toBeInstanceOf(TsadwynStructureError);
+    expect(err).toBeInstanceOf(TsadwynError);
     expect(err).toBeInstanceOf(Error);
-    expect(err.name).toBe("CadwynStructureError");
+    expect(err.name).toBe("TsadwynStructureError");
     expect(err.message).toBe("structure bad");
     expect(err.stack).toBeDefined();
 
     try {
       throw err;
     } catch (e) {
-      expect(e).toBeInstanceOf(CadwynStructureError);
-      expect(e).toBeInstanceOf(CadwynError);
+      expect(e).toBeInstanceOf(TsadwynStructureError);
+      expect(e).toBeInstanceOf(TsadwynError);
     }
   });
 
-  it("CadwynLatestRequestValidationError — preserves fields and instanceof", () => {
+  it("TsadwynLatestRequestValidationError — preserves fields and instanceof", () => {
     const errors = [{ path: ["a"], message: "required" }];
     const body = { foo: "bar" };
     const version = "2000-01-01";
-    const err = new CadwynLatestRequestValidationError(errors, body, version);
+    const err = new TsadwynLatestRequestValidationError(errors, body, version);
 
-    expect(err).toBeInstanceOf(CadwynLatestRequestValidationError);
-    expect(err).toBeInstanceOf(CadwynError);
-    expect(err.name).toBe("CadwynLatestRequestValidationError");
+    expect(err).toBeInstanceOf(TsadwynLatestRequestValidationError);
+    expect(err).toBeInstanceOf(TsadwynError);
+    expect(err.name).toBe("TsadwynLatestRequestValidationError");
     expect(err.errors).toBe(errors);
     expect(err.body).toBe(body);
     expect(err.version).toBe(version);
@@ -94,19 +94,19 @@ describe("Section 1: exception classes basic behavior", () => {
     try {
       throw err;
     } catch (e) {
-      expect(e).toBeInstanceOf(CadwynLatestRequestValidationError);
+      expect(e).toBeInstanceOf(TsadwynLatestRequestValidationError);
     }
   });
 
-  it("CadwynHeadRequestValidationError — preserves fields and instanceof", () => {
+  it("TsadwynHeadRequestValidationError — preserves fields and instanceof", () => {
     const errors = [{ code: "invalid_type" }];
     const body = { x: 1 };
     const version = "2001-02-03";
-    const err = new CadwynHeadRequestValidationError(errors, body, version);
+    const err = new TsadwynHeadRequestValidationError(errors, body, version);
 
-    expect(err).toBeInstanceOf(CadwynHeadRequestValidationError);
-    expect(err).toBeInstanceOf(CadwynError);
-    expect(err.name).toBe("CadwynHeadRequestValidationError");
+    expect(err).toBeInstanceOf(TsadwynHeadRequestValidationError);
+    expect(err).toBeInstanceOf(TsadwynError);
+    expect(err.name).toBe("TsadwynHeadRequestValidationError");
     expect(err.errors).toBe(errors);
     expect(err.body).toBe(body);
     expect(err.version).toBe(version);
@@ -118,14 +118,14 @@ describe("Section 1: exception classes basic behavior", () => {
     try {
       throw err;
     } catch (e) {
-      expect(e).toBeInstanceOf(CadwynHeadRequestValidationError);
+      expect(e).toBeInstanceOf(TsadwynHeadRequestValidationError);
     }
   });
 
-  it("LintingError — extends CadwynError", () => {
+  it("LintingError — extends TsadwynError", () => {
     const err = new LintingError("lint failed");
     expect(err).toBeInstanceOf(LintingError);
-    expect(err).toBeInstanceOf(CadwynError);
+    expect(err).toBeInstanceOf(TsadwynError);
     expect(err.name).toBe("LintingError");
     expect(err.message).toBe("lint failed");
     expect(err.stack).toBeDefined();
@@ -143,10 +143,10 @@ describe("Section 1: exception classes basic behavior", () => {
     expect(err.name).toBe("LintingError");
   });
 
-  it("RouterGenerationError — extends CadwynError", () => {
+  it("RouterGenerationError — extends TsadwynError", () => {
     const err = new RouterGenerationError("gen bad");
     expect(err).toBeInstanceOf(RouterGenerationError);
-    expect(err).toBeInstanceOf(CadwynError);
+    expect(err).toBeInstanceOf(TsadwynError);
     expect(err.name).toBe("RouterGenerationError");
     expect(err.message).toBe("gen bad");
     expect(err.stack).toBeDefined();
@@ -162,7 +162,7 @@ describe("Section 1: exception classes basic behavior", () => {
     const err = new RouteAlreadyExistsError("GET /users", "GET /users/profile", "POST /users");
     expect(err).toBeInstanceOf(RouteAlreadyExistsError);
     expect(err).toBeInstanceOf(RouterGenerationError);
-    expect(err).toBeInstanceOf(CadwynError);
+    expect(err).toBeInstanceOf(TsadwynError);
     expect(err.name).toBe("RouteAlreadyExistsError");
     expect(err.routes).toEqual(["GET /users", "GET /users/profile", "POST /users"]);
     expect(err.message).toContain("GET /users");
@@ -187,7 +187,7 @@ describe("Section 1: exception classes basic behavior", () => {
     const err = new RouteByPathConverterDoesNotApplyToAnythingError("no matches for /foo");
     expect(err).toBeInstanceOf(RouteByPathConverterDoesNotApplyToAnythingError);
     expect(err).toBeInstanceOf(RouterGenerationError);
-    expect(err).toBeInstanceOf(CadwynError);
+    expect(err).toBeInstanceOf(TsadwynError);
     expect(err.name).toBe("RouteByPathConverterDoesNotApplyToAnythingError");
     expect(err.message).toBe("no matches for /foo");
     expect(err.stack).toBeDefined();
@@ -205,7 +205,7 @@ describe("Section 1: exception classes basic behavior", () => {
     );
     expect(err).toBeInstanceOf(RouteRequestBySchemaConverterDoesNotApplyToAnythingError);
     expect(err).toBeInstanceOf(RouterGenerationError);
-    expect(err).toBeInstanceOf(CadwynError);
+    expect(err).toBeInstanceOf(TsadwynError);
     expect(err.name).toBe("RouteRequestBySchemaConverterDoesNotApplyToAnythingError");
     expect(err.message).toBe("no schema applies");
     expect(err.stack).toBeDefined();
@@ -223,7 +223,7 @@ describe("Section 1: exception classes basic behavior", () => {
     );
     expect(err).toBeInstanceOf(RouteResponseBySchemaConverterDoesNotApplyToAnythingError);
     expect(err).toBeInstanceOf(RouterGenerationError);
-    expect(err).toBeInstanceOf(CadwynError);
+    expect(err).toBeInstanceOf(TsadwynError);
     expect(err.name).toBe("RouteResponseBySchemaConverterDoesNotApplyToAnythingError");
     expect(err.message).toBe("response schema unused");
     expect(err.stack).toBeDefined();
@@ -239,7 +239,7 @@ describe("Section 1: exception classes basic behavior", () => {
     const err = new RouterPathParamsModifiedError("path params changed");
     expect(err).toBeInstanceOf(RouterPathParamsModifiedError);
     expect(err).toBeInstanceOf(RouterGenerationError);
-    expect(err).toBeInstanceOf(CadwynError);
+    expect(err).toBeInstanceOf(TsadwynError);
     expect(err.name).toBe("RouterPathParamsModifiedError");
     expect(err.message).toBe("path params changed");
     expect(err.stack).toBeDefined();
@@ -251,10 +251,10 @@ describe("Section 1: exception classes basic behavior", () => {
     }
   });
 
-  it("InvalidGenerationInstructionError — extends CadwynError", () => {
+  it("InvalidGenerationInstructionError — extends TsadwynError", () => {
     const err = new InvalidGenerationInstructionError("bad instruction");
     expect(err).toBeInstanceOf(InvalidGenerationInstructionError);
-    expect(err).toBeInstanceOf(CadwynError);
+    expect(err).toBeInstanceOf(TsadwynError);
     expect(err.name).toBe("InvalidGenerationInstructionError");
     expect(err.message).toBe("bad instruction");
     expect(err.stack).toBeDefined();
@@ -266,10 +266,10 @@ describe("Section 1: exception classes basic behavior", () => {
     }
   });
 
-  it("ModuleIsNotVersionedError — extends CadwynError", () => {
+  it("ModuleIsNotVersionedError — extends TsadwynError", () => {
     const err = new ModuleIsNotVersionedError("module is not versioned");
     expect(err).toBeInstanceOf(ModuleIsNotVersionedError);
-    expect(err).toBeInstanceOf(CadwynError);
+    expect(err).toBeInstanceOf(TsadwynError);
     expect(err.name).toBe("ModuleIsNotVersionedError");
     expect(err.message).toBe("module is not versioned");
     expect(err.stack).toBeDefined();
@@ -287,11 +287,11 @@ describe("Section 1: exception classes basic behavior", () => {
     expect(err.name).toBe("ModuleIsNotVersionedError");
   });
 
-  it("HttpError — extends Error (NOT CadwynError) with statusCode/body/headers", () => {
+  it("HttpError — extends Error (NOT TsadwynError) with statusCode/body/headers", () => {
     const err = new HttpError(400, { message: "bad request" });
     expect(err).toBeInstanceOf(HttpError);
     expect(err).toBeInstanceOf(Error);
-    expect(err).not.toBeInstanceOf(CadwynError);
+    expect(err).not.toBeInstanceOf(TsadwynError);
     expect(err.name).toBe("HttpError");
     expect(err.statusCode).toBe(400);
     expect(err.body).toEqual({ message: "bad request" });
@@ -358,7 +358,7 @@ describe("Section 2: HttpError specifics", () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe("Section 3: validation errors preserve data", () => {
-  it("CadwynLatestRequestValidationError — preserves errors/body/version", () => {
+  it("TsadwynLatestRequestValidationError — preserves errors/body/version", () => {
     const errors = [
       { path: ["name"], message: "Required", code: "invalid_type" },
       { path: ["age"], message: "Expected number", code: "invalid_type" },
@@ -366,7 +366,7 @@ describe("Section 3: validation errors preserve data", () => {
     const body = { name: null, age: "twenty" };
     const version = "2023-11-15";
 
-    const err = new CadwynLatestRequestValidationError(errors, body, version);
+    const err = new TsadwynLatestRequestValidationError(errors, body, version);
 
     expect(err.errors).toStrictEqual(errors);
     expect(err.body).toStrictEqual(body);
@@ -377,12 +377,12 @@ describe("Section 3: validation errors preserve data", () => {
     expect(err.message).toContain(JSON.stringify(errors));
   });
 
-  it("CadwynHeadRequestValidationError — preserves errors/body/version", () => {
+  it("TsadwynHeadRequestValidationError — preserves errors/body/version", () => {
     const errors = [{ path: ["email"], message: "Invalid email" }];
     const body = { email: "not-an-email" };
     const version = "2024-06-01";
 
-    const err = new CadwynHeadRequestValidationError(errors, body, version);
+    const err = new TsadwynHeadRequestValidationError(errors, body, version);
 
     expect(err.errors).toStrictEqual(errors);
     expect(err.body).toStrictEqual(body);

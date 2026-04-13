@@ -13,8 +13,8 @@ describe("currentDependencySolver", () => {
   });
 
   it("returns the stored value when called inside a .run() block", () => {
-    currentDependencySolverStorage.run("cadwyn", () => {
-      expect(currentDependencySolver()).toBe("cadwyn");
+    currentDependencySolverStorage.run("tsadwyn", () => {
+      expect(currentDependencySolver()).toBe("tsadwyn");
     });
   });
 
@@ -28,16 +28,16 @@ describe("currentDependencySolver", () => {
     currentDependencySolverStorage.run("express", () => {
       expect(currentDependencySolver()).toBe("express");
 
-      currentDependencySolverStorage.run("cadwyn", () => {
+      currentDependencySolverStorage.run("tsadwyn", () => {
         // Innermost wins.
-        expect(currentDependencySolver()).toBe("cadwyn");
+        expect(currentDependencySolver()).toBe("tsadwyn");
 
         currentDependencySolverStorage.run("express", () => {
           expect(currentDependencySolver()).toBe("express");
         });
 
         // Back to the previous level.
-        expect(currentDependencySolver()).toBe("cadwyn");
+        expect(currentDependencySolver()).toBe("tsadwyn");
       });
 
       // Back to the outer level.
@@ -46,8 +46,8 @@ describe("currentDependencySolver", () => {
   });
 
   it("falls back to 'express' after the .run() block exits", () => {
-    currentDependencySolverStorage.run("cadwyn", () => {
-      expect(currentDependencySolver()).toBe("cadwyn");
+    currentDependencySolverStorage.run("tsadwyn", () => {
+      expect(currentDependencySolver()).toBe("tsadwyn");
     });
 
     // Outside the block once again - default behavior.
@@ -56,12 +56,12 @@ describe("currentDependencySolver", () => {
   });
 
   it("propagates the stored value through async boundaries", async () => {
-    await currentDependencySolverStorage.run("cadwyn", async () => {
-      expect(currentDependencySolver()).toBe("cadwyn");
+    await currentDependencySolverStorage.run("tsadwyn", async () => {
+      expect(currentDependencySolver()).toBe("tsadwyn");
       await Promise.resolve();
-      expect(currentDependencySolver()).toBe("cadwyn");
+      expect(currentDependencySolver()).toBe("tsadwyn");
       await new Promise((resolve) => setImmediate(resolve));
-      expect(currentDependencySolver()).toBe("cadwyn");
+      expect(currentDependencySolver()).toBe("tsadwyn");
     });
 
     expect(currentDependencySolver()).toBe("express");

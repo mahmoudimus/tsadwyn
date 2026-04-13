@@ -6,7 +6,7 @@
  * schema validation boundaries, and route generation options.
  *
  * All tests are self-contained: each creates its own schemas, VersionChange
- * classes, and Cadwyn app. Migrations use the function-wrapper style so the
+ * classes, and Tsadwyn app. Migrations use the function-wrapper style so the
  * file works cleanly with tsx/esbuild without TypeScript decorator metadata.
  *
  * Run:  npx vitest run tests/migration-coverage.test.ts
@@ -17,7 +17,7 @@ import { z } from "zod";
 import type { Request, Response, NextFunction } from "express";
 
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -36,14 +36,14 @@ import {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
- * Create a Cadwyn app with a simple 2-version (2001-01-01 → 2000-01-01) setup.
+ * Create a Tsadwyn app with a simple 2-version (2001-01-01 → 2000-01-01) setup.
  * Newer version changes are prepended so the version list stays newest-first.
  */
 function makeApp(
   ChangeClasses: Array<new () => VersionChange>,
   routerSetup: (router: VersionedRouter) => void,
   options: { prefix?: string } = {},
-): Cadwyn {
+): Tsadwyn {
   const router = new VersionedRouter({ prefix: options.prefix });
   routerSetup(router);
 
@@ -53,7 +53,7 @@ function makeApp(
   }
   versionList.reverse();
 
-  const app = new Cadwyn({
+  const app = new Tsadwyn({
     versions: new VersionBundle(...versionList),
   });
   app.generateAndIncludeVersionedRouters(router);
@@ -222,7 +222,7 @@ describe("Section 1: request body migration edge cases", () => {
     // Build a 3-version app (newest first).
     const router = new VersionedRouter();
     router.post("/chain", Req, Res, async (req) => ({ val: req.body.val }));
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2002-01-01", V2toV3),
         new Version("2001-01-01", V1toV2),
@@ -575,7 +575,7 @@ describe("Section 3: response body migration edge cases", () => {
     // Force the new version to respond 201:
     (router.routes[router.routes.length - 1] as any).statusCode = 201;
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", Change),
         new Version("2000-01-01"),
@@ -908,7 +908,7 @@ describe("Section 7: schema validation behavior", () => {
       .set("x-api-version", "2000-01-01")
       .send({ x: "abc" });
 
-    // The head re-validation throws CadwynHeadRequestValidationError which
+    // The head re-validation throws TsadwynHeadRequestValidationError which
     // propagates to Express's default error handler as a 500.
     expect(res.status).toBe(500);
   });
@@ -1093,13 +1093,13 @@ describe("Section 8: route generation edge cases", () => {
   });
 
   // Tests 33 & 34 exercise router-level middleware via router.use(). The
-  // current Cadwyn initialization path rebuilds a plain `mergedRouter` object
+  // current Tsadwyn initialization path rebuilds a plain `mergedRouter` object
   // that carries `routes` but not `routerMiddleware`, so router-level
   // middleware registered via `router.use()` is dropped during merging.
   // These tests are skipped until the merged router is constructed to carry
   // the middleware through.
   it("33. router-level middleware runs before the route handler", async () => {
-    // Now works — Cadwyn._performInitialization preserves router-level
+    // Now works — Tsadwyn._performInitialization preserves router-level
     // middleware through the merged router. State propagates to the handler
     // via req.headers (since the handler receives only body/params/query/headers).
     const Res = z.object({ mark: z.string() }).named(uniq("RouterMwRes"));
@@ -1113,7 +1113,7 @@ describe("Section 8: route generation edge cases", () => {
       mark: String(req.headers["x-router-mark"] ?? ""),
     }));
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(new Version("2000-01-01")),
     });
     app.generateAndIncludeVersionedRouters(router);
@@ -1148,7 +1148,7 @@ describe("Section 8: route generation edge cases", () => {
       { middleware: [routeLevel] },
     );
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(new Version("2000-01-01")),
     });
     app.generateAndIncludeVersionedRouters(router);
@@ -1162,7 +1162,7 @@ describe("Section 8: route generation edge cases", () => {
   });
 
   it("34b. route-level middleware runs before the route handler", async () => {
-    // Route-level middleware IS preserved through Cadwyn's route generation.
+    // Route-level middleware IS preserved through Tsadwyn's route generation.
     // The handler receives a subset of Express `req` (only body/params/query/
     // headers), so we propagate middleware state through `req.headers`, which
     // the handler can read from its typed request.
@@ -1181,7 +1181,7 @@ describe("Section 8: route generation edge cases", () => {
       { middleware: [mw] },
     );
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(new Version("2000-01-01")),
     });
     app.generateAndIncludeVersionedRouters(router);
@@ -1218,7 +1218,7 @@ describe("Section 8: route generation edge cases", () => {
       { middleware: [mw1, mw2] },
     );
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(new Version("2000-01-01")),
     });
     app.generateAndIncludeVersionedRouters(router);

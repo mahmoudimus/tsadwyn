@@ -4,7 +4,7 @@
  */
 import { z } from "zod";
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionedRouter,
@@ -17,7 +17,7 @@ const Foo = z
 const single = new VersionedRouter();
 single.get("/foo/:id", null, Foo, async (req: any) => ({ id: req.params.id }));
 
-export const app = new Cadwyn({
+export const app = new Tsadwyn({
   versions: new VersionBundle(new Version("2010-01-01")),
 });
 

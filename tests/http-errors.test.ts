@@ -12,7 +12,7 @@ import request from "supertest";
 import { z } from "zod";
 
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -71,7 +71,7 @@ describe("HTTPException response migration", () => {
       return { id: req.params.id, field: "value" };
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", RenameFieldInError),
         new Version("2000-01-01"),
@@ -151,7 +151,7 @@ describe("HTTPException response migration", () => {
       );
     }
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", RenameFieldNoErrors2),
         new Version("2000-01-01"),
@@ -201,7 +201,7 @@ describe("HTTPException response migration", () => {
       throw new HttpError(403, { message: "forbidden" });
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", AddStatusField),
         new Version("2000-01-01"),
@@ -235,7 +235,7 @@ describe("HTTPException response migration", () => {
       );
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", NoOpChange),
         new Version("2000-01-01"),

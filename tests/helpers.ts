@@ -1,7 +1,7 @@
 import request from "supertest";
 import { z, ZodTypeAny } from "zod";
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -67,14 +67,14 @@ export function versionChange(
 
 /**
  * Factory to create versioned apps quickly in tests.
- * Takes VersionChange classes and creates a Cadwyn app with a default router.
+ * Takes VersionChange classes and creates a Tsadwyn app with a default router.
  */
 export function createVersionedApp(
   router: VersionedRouter,
   ...changeClasses: Array<new () => VersionChange>
-): Cadwyn {
+): Tsadwyn {
   const versionList = versions(...changeClasses);
-  const app = new Cadwyn({
+  const app = new Tsadwyn({
     versions: new VersionBundle(...versionList),
   });
   app.generateAndIncludeVersionedRouters(router);
@@ -86,7 +86,7 @@ export function createVersionedApp(
  * Returns a record of version string -> supertest instance.
  */
 export function createVersionedClients(
-  app: Cadwyn,
+  app: Tsadwyn,
 ): Record<string, request.Agent> {
   const clients: Record<string, request.Agent> = {};
   for (const version of app.versions.versionValues) {

@@ -4,7 +4,7 @@ import { z } from "zod";
 import crypto from "node:crypto";
 
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -35,7 +35,7 @@ function createSimpleApp(
   }
   versionList.reverse();
 
-  const app = new Cadwyn({
+  const app = new Tsadwyn({
     versions: new VersionBundle(...versionList),
   });
   app.generateAndIncludeVersionedRouters(router);

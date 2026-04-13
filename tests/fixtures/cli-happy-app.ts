@@ -1,13 +1,13 @@
 /**
  * Fixture app for CLI coverage tests.
  *
- * Exports a default Cadwyn instance with two versions and one versioned
+ * Exports a default Tsadwyn instance with two versions and one versioned
  * schema migration so the `codegen` and `info` CLI commands have something
  * real to report on.
  */
 import { z } from "zod";
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -36,7 +36,7 @@ class RenameThingName extends VersionChange {
   ];
 }
 
-const app = new Cadwyn({
+const app = new Tsadwyn({
   versions: new VersionBundle(
     new Version("2001-01-01", RenameThingName),
     new Version("2000-01-01"),

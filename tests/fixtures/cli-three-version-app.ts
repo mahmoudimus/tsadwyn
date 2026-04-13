@@ -4,7 +4,7 @@
  */
 import { z } from "zod";
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -42,7 +42,7 @@ class RenameAuthorToWriter extends VersionChange {
   ];
 }
 
-const app = new Cadwyn({
+const app = new Tsadwyn({
   versions: new VersionBundle(
     new Version("2003-01-01", RenameTitleToHeadline),
     new Version("2002-01-01", RenameAuthorToWriter),

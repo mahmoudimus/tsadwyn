@@ -6,7 +6,7 @@
  * background jobs, and event streams.
  */
 
-import { CadwynError } from "./exceptions.js";
+import { TsadwynError } from "./exceptions.js";
 import { ResponseInfo } from "./structure/data.js";
 import type { VersionBundle } from "./structure/versions.js";
 
@@ -31,7 +31,7 @@ export function migrateResponseBody(
 ): any {
   // Validate that the target version exists
   if (!versionBundle.versionValues.includes(targetVersion)) {
-    throw new CadwynError(
+    throw new TsadwynError(
       `Version "${targetVersion}" not found in version bundle. ` +
       `Available versions: [${versionBundle.versionValues.join(", ")}]`,
     );

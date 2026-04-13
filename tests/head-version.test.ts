@@ -12,7 +12,7 @@ import request from "supertest";
 import { z } from "zod";
 
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -23,7 +23,7 @@ import {
   convertResponseToPreviousVersionFor,
   RequestInfo,
   ResponseInfo,
-  CadwynStructureError,
+  TsadwynStructureError,
 } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
@@ -51,7 +51,7 @@ describe("HeadVersion", () => {
       return { id: req.params.id, name: "Widget", category: "tools" };
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new HeadVersion(HeadAddCategory),
         new Version("2024-01-01"),
@@ -82,9 +82,9 @@ describe("HeadVersion", () => {
       );
     }
 
-    // HeadVersion should throw CadwynStructureError because migration decorators
+    // HeadVersion should throw TsadwynStructureError because migration decorators
     // are not allowed in HeadVersion
-    expect(() => new HeadVersion(HeadWithMigration)).toThrow(CadwynStructureError);
+    expect(() => new HeadVersion(HeadWithMigration)).toThrow(TsadwynStructureError);
     expect(() => new HeadVersion(HeadWithMigration)).toThrow(
       /HeadVersion does not support request or response migrations/,
     );
@@ -104,7 +104,7 @@ describe("HeadVersion", () => {
       );
     }
 
-    expect(() => new HeadVersion(HeadWithRequestMigration)).toThrow(CadwynStructureError);
+    expect(() => new HeadVersion(HeadWithRequestMigration)).toThrow(TsadwynStructureError);
   });
 
   it("is applied before versioned changes", async () => {
@@ -146,7 +146,7 @@ describe("HeadVersion", () => {
       return { id: "p1", displayName: "JaneDoe", bio: "Hello world" };
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new HeadVersion(HeadAddBio),
         new Version("2024-06-01", RenameUsernameToDisplayName),

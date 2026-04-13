@@ -112,7 +112,7 @@ export interface VersionedRouterOptions {
 
 /**
  * VersionedRouter collects route definitions with their Zod schemas.
- * These definitions are later used by Cadwyn to generate per-version
+ * These definitions are later used by Tsadwyn to generate per-version
  * Express routers with appropriate validation and migration.
  *
  * Route methods are generic: when you provide Zod schemas for request and/or

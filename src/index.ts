@@ -3,8 +3,8 @@ import "./zod-extend.js";
 export { getSchemaName, setSchemaName } from "./zod-extend.js";
 
 // Public API surface for tsadwyn
-export { Cadwyn } from "./application.js";
-export type { CadwynOptions } from "./application.js";
+export { Tsadwyn } from "./application.js";
+export type { TsadwynOptions } from "./application.js";
 
 export {
   HeadVersion,
@@ -53,10 +53,10 @@ export type { VersionedRouterResult } from "./route-generation.js";
 export { ZodSchemaRegistry, generateVersionedSchemas, transformSchemaReferences } from "./schema-generation.js";
 
 export {
-  CadwynError,
-  CadwynStructureError,
-  CadwynLatestRequestValidationError,
-  CadwynHeadRequestValidationError,
+  TsadwynError,
+  TsadwynStructureError,
+  TsadwynLatestRequestValidationError,
+  TsadwynHeadRequestValidationError,
   LintingError,
   RouterGenerationError,
   RouteAlreadyExistsError,
@@ -89,8 +89,8 @@ export { renderDocsDashboard, renderSwaggerUI, renderRedocUI, DEFAULT_ASSET_URLS
 export type { DocsAssetUrls } from "./docs.js";
 
 // Internal routing module (T-1303)
-export { RootCadwynRouter } from "./routing.js";
-export type { RootCadwynRouterOptions } from "./routing.js";
+export { RootTsadwynRouter } from "./routing.js";
+export type { RootTsadwynRouterOptions } from "./routing.js";
 
 // Dependency context (T-1304)
 export {
@@ -103,7 +103,7 @@ export {
 export { migrateResponseBody } from "./migrate.js";
 
 // T-1300 and T-1301: AST analysis and custom module loading
-// These features are N/A in the TypeScript version. In the Python Cadwyn library,
+// These features are N/A in the TypeScript version. In the Python Tsadwyn library,
 // T-1300 (AST analysis) uses Python's ast module to analyze and render versioned
 // Pydantic models as source code. T-1301 (custom module loading) uses importlib
 // to intercept module imports and replace schemas with versioned copies at import time.

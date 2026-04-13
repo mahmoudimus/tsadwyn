@@ -11,7 +11,7 @@ import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { z } from "zod";
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -78,7 +78,7 @@ describe("T-2400: schema discovery from instructions", () => {
     });
 
     // This should NOT throw — Address should be discovered from the instruction
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2024-06-01", RenameZipCode),
         new Version("2024-01-01"),
@@ -125,7 +125,7 @@ describe("T-2400: schema discovery from instructions", () => {
     router.get("/health", null, null, async () => ({ status: "ok" }));
 
     // Should NOT throw InvalidGenerationInstructionError
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2024-06-01", AddTags),
         new Version("2024-01-01"),

@@ -7,7 +7,7 @@ import type {
   AlterRequestByPathInstruction,
   AlterResponseByPathInstruction,
 } from "./data.js";
-import { CadwynError, CadwynStructureError } from "../exceptions.js";
+import { TsadwynError, TsadwynStructureError } from "../exceptions.js";
 import { apiVersionStorage } from "../middleware.js";
 
 export type PossibleInstruction =
@@ -218,7 +218,7 @@ function _validateVersionChange(change: VersionChange, className: string): void 
   // 1. Check if the base VersionChange class is used directly (not subclassed)
   const proto = Object.getPrototypeOf(change);
   if (proto.constructor === VersionChange) {
-    throw new CadwynStructureError(
+    throw new TsadwynStructureError(
       "'VersionChange' was used directly instead of being subclassed. " +
       "Create a subclass of VersionChange that sets 'description' and 'instructions'.",
     );
@@ -226,14 +226,14 @@ function _validateVersionChange(change: VersionChange, className: string): void 
 
   // 2. description must be set and non-empty
   if (!change.description || change.description.trim() === "") {
-    throw new CadwynStructureError(
+    throw new TsadwynStructureError(
       `Version change description is not set on '${className}' but is required.`,
     );
   }
 
   // 3. instructions must be an array
   if (!Array.isArray(change.instructions)) {
-    throw new CadwynStructureError(
+    throw new TsadwynStructureError(
       `Attribute 'instructions' must be an array in '${className}'.`,
     );
   }
@@ -246,7 +246,7 @@ function _validateVersionChange(change: VersionChange, className: string): void 
       !("kind" in instruction) ||
       !KNOWN_INSTRUCTION_KINDS.has((instruction as any).kind)
     ) {
-      throw new CadwynStructureError(
+      throw new TsadwynStructureError(
         `Instruction '${JSON.stringify(instruction)}' in '${className}' is not a recognized instruction type. ` +
         "Please use the correct instruction types (schema().field().had(), endpoint().didntExist, etc.).",
       );
@@ -269,7 +269,7 @@ function _validateVersionChange(change: VersionChange, className: string): void 
     ) {
       continue;
     }
-    throw new CadwynStructureError(
+    throw new TsadwynStructureError(
       `Found: '${attrName}' attribute of type '${typeof attrValue}' in '${className}'. ` +
       "Only migration instructions and schema properties are allowed in version change class body.",
     );
@@ -342,7 +342,7 @@ export class HeadVersion {
         instance._alterRequestByPathInstructions.size > 0 ||
         instance._alterResponseByPathInstructions.size > 0
       ) {
-        throw new CadwynStructureError(
+        throw new TsadwynStructureError(
           `HeadVersion does not support request or response migrations but "${Cls.name || "AnonymousVersionChange"}" contained one.`,
         );
       }
@@ -466,13 +466,13 @@ export class VersionBundle {
     this.headVersion = headVersion ?? new HeadVersion();
 
     if (versions.length === 0) {
-      throw new CadwynStructureError("You must define at least one version in a VersionBundle.");
+      throw new TsadwynStructureError("You must define at least one version in a VersionBundle.");
     }
 
     // Validate: last version (oldest) must not have changes
     const oldest = versions[versions.length - 1];
     if (oldest.changes.length > 0) {
-      throw new CadwynStructureError(
+      throw new TsadwynStructureError(
         `The first (oldest) version "${oldest.value}" cannot have any version changes. ` +
         "Version changes describe how to migrate to/from a previous version, " +
         "so the very first version cannot have any.",
@@ -483,7 +483,7 @@ export class VersionBundle {
     const seen = new Set<string>();
     for (const v of versions) {
       if (seen.has(v.value)) {
-        throw new CadwynStructureError(
+        throw new TsadwynStructureError(
           `Duplicate version value "${v.value}" in VersionBundle.`,
         );
       }
@@ -494,7 +494,7 @@ export class VersionBundle {
     if (apiVersionFormat === "date") {
       for (const v of versions) {
         if (!isValidISODate(v.value)) {
-          throw new CadwynStructureError(
+          throw new TsadwynStructureError(
             `Version value "${v.value}" is not a valid ISO date (YYYY-MM-DD).`,
           );
         }
@@ -503,7 +503,7 @@ export class VersionBundle {
       // Validate versions are sorted newest-first
       for (let i = 0; i < versions.length - 1; i++) {
         if (versions[i].value <= versions[i + 1].value) {
-          throw new CadwynStructureError(
+          throw new TsadwynStructureError(
             `Versions must be sorted from newest to oldest, but "${versions[i].value}" ` +
             `is not newer than "${versions[i + 1].value}".`,
           );
@@ -517,7 +517,7 @@ export class VersionBundle {
       for (const Cls of version._changeClasses) {
         const clsAny = Cls as any;
         if (clsAny._boundToBundle !== null && clsAny._boundToBundle !== this) {
-          throw new CadwynStructureError(
+          throw new TsadwynStructureError(
             `VersionChange "${Cls.name}" is already bound to a different VersionBundle. ` +
             "A VersionChange can only belong to one VersionBundle.",
           );
@@ -555,13 +555,13 @@ export class VersionChangeWithSideEffects extends VersionChange {
    * - Returns true if no version is set (unversioned/internal request).
    * - Returns true if the change's version >= current request version
    *   (meaning the change has been applied for this version).
-   * - Throws CadwynError if this change hasn't been bound to a VersionBundle.
+   * - Throws TsadwynError if this change hasn't been bound to a VersionBundle.
    */
   static get isApplied(): boolean {
     const clsAny = this as any;
 
     if (!clsAny._boundToBundle || !clsAny._boundVersion) {
-      throw new CadwynError(
+      throw new TsadwynError(
         `You tried to check whether '${this.name}' is active but it was never bound to any version. ` +
         "Make sure this VersionChange is included in a VersionBundle.",
       );

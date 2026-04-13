@@ -1,6 +1,6 @@
 /**
  * Fully duck-typed "app" that implements the minimal surface the CLI needs
- * without being a real Cadwyn instance. Exercises defensive fallbacks in the
+ * without being a real Tsadwyn instance. Exercises defensive fallbacks in the
  * CLI for apps where `_versionedRouters` contains entries whose routers
  * have no `.stack` property, and where version objects are missing
  * `_alterSchemaInstructions` / `changes` entirely.

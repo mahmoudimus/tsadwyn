@@ -10,7 +10,7 @@ import {
   type VersionPickingOptions,
 } from "./middleware.js";
 import { generateVersionedRouters } from "./route-generation.js";
-import { CadwynStructureError } from "./exceptions.js";
+import { TsadwynStructureError } from "./exceptions.js";
 import { AlterSchemaInstructionFactory } from "./structure/schemas.js";
 import { buildOpenAPIDocument } from "./openapi.js";
 import type { OpenAPIDocument } from "./openapi.js";
@@ -19,7 +19,7 @@ import type { ChangelogResource } from "./changelog.js";
 import { ZodSchemaRegistry, generateVersionedSchemas } from "./schema-generation.js";
 import { renderDocsDashboard, renderSwaggerUI, renderRedocUI, DEFAULT_ASSET_URLS } from "./docs.js";
 import type { DocsAssetUrls } from "./docs.js";
-import { RootCadwynRouter } from "./routing.js";
+import { RootTsadwynRouter } from "./routing.js";
 
 /**
  * Regex for validating ISO date strings (YYYY-MM-DD).
@@ -45,7 +45,7 @@ function _isValidISODate(value: string): boolean {
   );
 }
 
-export interface CadwynOptions {
+export interface TsadwynOptions {
   versions: VersionBundle;
   apiVersionHeaderName?: string;
 
@@ -140,10 +140,10 @@ export interface CadwynOptions {
 }
 
 /**
- * The main Cadwyn application class. Wraps an Express app and orchestrates
+ * The main Tsadwyn application class. Wraps an Express app and orchestrates
  * versioned routing, schema generation, and request/response migration.
  */
-export class Cadwyn {
+export class Tsadwyn {
   expressApp: Express;
   versions: VersionBundle;
   apiVersionHeaderName: string;
@@ -195,7 +195,7 @@ export class Cadwyn {
   /**
    * Internal root router that manages versioned Express routers (T-1303).
    */
-  private _rootRouter!: RootCadwynRouter;
+  private _rootRouter!: RootTsadwynRouter;
 
   private _routes: RouteDefinition[] = [];
   private _versionedRoutes: Map<string, RouteDefinition[]> = new Map();
@@ -225,7 +225,7 @@ export class Cadwyn {
     return this._rootRouter.versionedRouters;
   }
 
-  constructor(options: CadwynOptions) {
+  constructor(options: TsadwynOptions) {
     this.versions = options.versions;
     this.apiVersionHeaderName = options.apiVersionHeaderName || "x-api-version";
     this.apiVersionLocation = options.apiVersionLocation || "custom_header";
@@ -270,19 +270,19 @@ export class Cadwyn {
 
     // Validation: apiVersionDefaultValue cannot be used with path-based versioning
     if (this.apiVersionDefaultValue !== null && this.apiVersionLocation === "path") {
-      throw new CadwynStructureError(
+      throw new TsadwynStructureError(
         "You tried to pass an apiVersionDefaultValue while putting the API version in Path. " +
-        "This is not currently supported by Cadwyn. " +
+        "This is not currently supported by Tsadwyn. " +
         "Please, open an issue on our github if you'd like to have it."
       );
     }
 
     // Note: Date format validation and sort-order checks are handled by VersionBundle
-    // when the apiVersionFormat option is passed to it. The Cadwyn class only stores
+    // when the apiVersionFormat option is passed to it. The Tsadwyn class only stores
     // the format for use in middleware and routing logic.
 
     // Initialize the internal root router (T-1303)
-    this._rootRouter = new RootCadwynRouter({
+    this._rootRouter = new RootTsadwynRouter({
       apiVersionParameterName: this.apiVersionHeaderName,
       versionValues: this.versions.versionValues,
     });
@@ -687,7 +687,7 @@ export class Cadwyn {
       // Validate each version is a valid ISO date string
       for (const v of versions) {
         if (!_isValidISODate(v)) {
-          throw new CadwynStructureError(
+          throw new TsadwynStructureError(
             `Version value "${v}" is not a valid ISO date (YYYY-MM-DD).`,
           );
         }
@@ -696,7 +696,7 @@ export class Cadwyn {
       // Validate versions are sorted newest-first
       for (let i = 0; i < versions.length - 1; i++) {
         if (versions[i] <= versions[i + 1]) {
-          throw new CadwynStructureError(
+          throw new TsadwynStructureError(
             `Versions must be sorted from newest to oldest, but "${versions[i]}" ` +
             `is not newer than "${versions[i + 1]}".`,
           );

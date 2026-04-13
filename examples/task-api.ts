@@ -7,7 +7,7 @@
 import crypto from "node:crypto";
 import { z } from "zod";
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -162,7 +162,7 @@ class AddDescription extends VersionChange {
 // App — wire it all together
 // ---------------------------------------------------------------------------
 
-const app = new Cadwyn({
+const app = new Tsadwyn({
   versions: new VersionBundle(
     new Version("2024-03-01", AddCriticalPriorityAndMultipleAssignees),
     new Version("2024-02-01", AddDescription),

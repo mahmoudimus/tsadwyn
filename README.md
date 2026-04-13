@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/mahmoudimus/tsadwyn/actions/workflows/ci.yml/badge.svg)](https://github.com/mahmoudimus/tsadwyn/actions/workflows/ci.yml)
 
-Stripe-like API versioning for TypeScript/Express. tsadwyn is a TypeScript port of [Cadwyn](https://github.com/zmievsa/cadwyn), which enables you to maintain a single codebase that serves multiple API versions simultaneously. Instead of duplicating routes for each version, you define version changes declaratively and tsadwyn generates versioned routers with automatic request/response migration.
+Stripe-like API versioning for TypeScript/Express. tsadwyn enables you to maintain a single codebase that serves multiple API versions simultaneously. Instead of duplicating routes for each version, you define version changes declaratively and tsadwyn generates versioned routers with automatic request/response migration.
 
 ## Installation
 
@@ -15,7 +15,7 @@ npm install tsadwyn
 ```typescript
 import { z } from "zod";
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -71,7 +71,7 @@ router.post("/users", UserCreateRequest, UserResource, async (req) => {
 });
 
 // 4. Create the app with version declarations
-const app = new Cadwyn({
+const app = new Tsadwyn({
   versions: new VersionBundle(
     new Version("2025-01-01", ChangeAddressToList),
     new Version("2024-01-01"), // oldest version, no changes
@@ -99,7 +99,7 @@ tsadwyn automatically migrates requests from old versions to the latest format b
 - **convertRequestToNextVersionFor**: Migrate request bodies from old to new format
 - **convertResponseToPreviousVersionFor**: Migrate response bodies from new to old format
 
-For full documentation on API versioning concepts, see the [Cadwyn docs](https://docs.cadwyn.dev/).
+For deeper background on the head-first API versioning pattern, see the [concept docs](https://docs.cadwyn.dev/).
 
 ## API Reference
 
@@ -107,7 +107,7 @@ For full documentation on API versioning concepts, see the [Cadwyn docs](https:/
 
 | Export | Description |
 |--------|-------------|
-| `Cadwyn` | Main application class wrapping Express |
+| `Tsadwyn` | Main application class wrapping Express |
 | `VersionedRouter` | Route collector with typed schema parameters |
 | `Version` | A single API version declaration |
 | `VersionBundle` | Bundle of all API versions (newest first) |
@@ -142,7 +142,7 @@ For full documentation on API versioning concepts, see the [Cadwyn docs](https:/
 
 ## CLI
 
-tsadwyn ships a small CLI that mirrors a subset of Cadwyn's Python CLI. When the package is installed, the `tsadwyn` binary is available on your `PATH`; during development you can invoke it with `npx tsx src/cli.ts`.
+tsadwyn ships a small CLI for codegen and introspection. When the package is installed, the `tsadwyn` binary is available on your `PATH`; during development you can invoke it with `npx tsx src/cli.ts`.
 
 ```bash
 tsadwyn --version            # prints the CLI version
@@ -152,7 +152,7 @@ tsadwyn --help               # lists available commands
 
 ### `tsadwyn codegen --app <path>`
 
-Loads a TypeScript/JavaScript module that exports a Cadwyn application (either as `default` or as a named `app` export), triggers versioned-router generation, and prints a summary of the resulting versions and route counts.
+Loads a TypeScript/JavaScript module that exports a Tsadwyn application (either as `default` or as a named `app` export), triggers versioned-router generation, and prints a summary of the resulting versions and route counts.
 
 ```bash
 tsadwyn codegen --app ./src/app.ts
@@ -174,11 +174,11 @@ Options:
 
 | Flag | Description |
 |------|-------------|
-| `--app <path>` | Required. Path to the module exporting the Cadwyn app. |
+| `--app <path>` | Required. Path to the module exporting the Tsadwyn app. |
 | `--api-version <value>` | Show info for a single API version only. Named `--api-version` (not `--version`) to avoid collision with the program's own `--version` flag. |
 | `--json` | Emit a single JSON line instead of formatted text, suitable for piping through `jq`. |
 
-Because tsadwyn's schemas are runtime Zod objects rather than source code, there is no equivalent of Cadwyn's `render model` / `render module` subcommands -- `info` is the TypeScript-idiomatic replacement.
+tsadwyn's schemas are runtime Zod objects rather than source code, so `info` is the canonical way to introspect the versioned surface area of a deployed app.
 
 ### `tsadwyn new version --date <YYYY-MM-DD>`
 
@@ -237,7 +237,7 @@ Options:
 
 After scaffolding, the CLI prints a "Next steps" box with the exact `import` and `new Version(...)` lines to add to your `VersionBundle`. tsadwyn does NOT auto-wire the VersionBundle for you — that's intentional, so you stay in control of your version ordering.
 
-**Known limitation (tracked as T-2500 in `ROADMAP.md`):** `--remove-field` emits `existedAs({ type: z.unknown() })` with a TODO comment because the CLI doesn't parse your source to infer the field's real Zod type. Fill it in manually with the correct type (e.g. `z.string()`, `z.number().int()`). A future release will parse your schemas file via the TypeScript compiler API to emit the exact type automatically. Same caveat applies to `--add-field` when generating a default-value callback.
+**Known limitation:** `--remove-field` emits `existedAs({ type: z.unknown() })` with a TODO comment because the CLI doesn't parse your source to infer the field's real Zod type. Fill it in manually with the correct type (e.g. `z.string()`, `z.number().int()`). A future release will parse your schemas file via the TypeScript compiler API to emit the exact type automatically. Same caveat applies to `--add-field` when generating a default-value callback.
 
 ## License
 

@@ -1,16 +1,16 @@
 /**
- * Cadwyn error hierarchy, ported from Python's cadwyn/exceptions.py.
+ * Tsadwyn error hierarchy.
  *
- * All Cadwyn-specific errors extend CadwynError (which itself extends Error)
- * so callers can catch the whole family with a single `catch (e) { if (e instanceof CadwynError) ... }`.
+ * All Tsadwyn-specific errors extend TsadwynError (which itself extends Error)
+ * so callers can catch the whole family with a single `catch (e) { if (e instanceof TsadwynError) ... }`.
  */
 
 // ── Base ────────────────────────────────────────────────────────────────────
 
-export class CadwynError extends Error {
+export class TsadwynError extends Error {
   constructor(message?: string) {
     super(message);
-    this.name = "CadwynError";
+    this.name = "TsadwynError";
     // Fix prototype chain for instanceof checks when targeting ES5
     Object.setPrototypeOf(this, new.target.prototype);
   }
@@ -18,10 +18,10 @@ export class CadwynError extends Error {
 
 // ── Structure / schema errors ───────────────────────────────────────────────
 
-export class CadwynStructureError extends CadwynError {
+export class TsadwynStructureError extends TsadwynError {
   constructor(message?: string) {
     super(message);
-    this.name = "CadwynStructureError";
+    this.name = "TsadwynStructureError";
   }
 }
 
@@ -32,7 +32,7 @@ export class CadwynStructureError extends CadwynError {
  * after migration has been applied. This indicates a bug in the migration code
  * rather than bad user input.
  */
-export class CadwynLatestRequestValidationError extends CadwynError {
+export class TsadwynLatestRequestValidationError extends TsadwynError {
   errors: unknown[];
   body: unknown;
   version: string;
@@ -43,7 +43,7 @@ export class CadwynLatestRequestValidationError extends CadwynError {
         "This likely indicates an error in migrations or schema structure.\n" +
         `body=${JSON.stringify(body)}\n\nerrors=${JSON.stringify(errors)}`,
     );
-    this.name = "CadwynLatestRequestValidationError";
+    this.name = "TsadwynLatestRequestValidationError";
     this.errors = errors;
     this.body = body;
     this.version = version;
@@ -55,7 +55,7 @@ export class CadwynLatestRequestValidationError extends CadwynError {
  * migration. This indicates the client sent an invalid request for the
  * requested API version.
  */
-export class CadwynHeadRequestValidationError extends CadwynError {
+export class TsadwynHeadRequestValidationError extends TsadwynError {
   errors: unknown[];
   body: unknown;
   version: string;
@@ -67,7 +67,7 @@ export class CadwynHeadRequestValidationError extends CadwynError {
         "to migrate the request of that version to latest.\n" +
         `body=${JSON.stringify(body)}\n\nerrors=${JSON.stringify(errors)}`,
     );
-    this.name = "CadwynHeadRequestValidationError";
+    this.name = "TsadwynHeadRequestValidationError";
     this.errors = errors;
     this.body = body;
     this.version = version;
@@ -76,7 +76,7 @@ export class CadwynHeadRequestValidationError extends CadwynError {
 
 // ── Linting ─────────────────────────────────────────────────────────────────
 
-export class LintingError extends CadwynError {
+export class LintingError extends TsadwynError {
   constructor(message?: string) {
     super(message);
     this.name = "LintingError";
@@ -85,7 +85,7 @@ export class LintingError extends CadwynError {
 
 // ── Router generation errors ────────────────────────────────────────────────
 
-export class RouterGenerationError extends CadwynError {
+export class RouterGenerationError extends TsadwynError {
   constructor(message?: string) {
     super(message);
     this.name = "RouterGenerationError";
@@ -132,7 +132,7 @@ export class RouterPathParamsModifiedError extends RouterGenerationError {
 
 // ── Generation instruction errors ───────────────────────────────────────────
 
-export class InvalidGenerationInstructionError extends CadwynError {
+export class InvalidGenerationInstructionError extends TsadwynError {
   constructor(message?: string) {
     super(message);
     this.name = "InvalidGenerationInstructionError";
@@ -147,7 +147,7 @@ export class InvalidGenerationInstructionError extends CadwynError {
  * `migrateHttpErrors: true`, and sends the (potentially modified) error
  * response with the migrated status code, body, and headers.
  *
- * This mirrors Cadwyn's HTTPException interception behavior.
+ * This mirrors Tsadwyn's HTTPException interception behavior.
  */
 export class HttpError extends Error {
   statusCode: number;
@@ -166,7 +166,7 @@ export class HttpError extends Error {
 
 // ── Module errors ───────────────────────────────────────────────────────────
 
-export class ModuleIsNotVersionedError extends CadwynError {
+export class ModuleIsNotVersionedError extends TsadwynError {
   constructor(message?: string) {
     super(message);
     this.name = "ModuleIsNotVersionedError";

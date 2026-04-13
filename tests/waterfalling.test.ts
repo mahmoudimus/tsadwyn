@@ -12,7 +12,7 @@ import request from "supertest";
 import { z } from "zod";
 
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -79,7 +79,7 @@ function createWaterfallingApp(enableWaterfalling: boolean) {
     options.enableWaterfalling = true;
   }
 
-  const app = new Cadwyn(options);
+  const app = new Tsadwyn(options);
   app.generateAndIncludeVersionedRouters(router);
 
   return app;

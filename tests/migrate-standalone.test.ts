@@ -17,7 +17,7 @@ import {
   convertResponseToPreviousVersionFor,
   ResponseInfo,
   migrateResponseBody,
-  CadwynError,
+  TsadwynError,
 } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
@@ -140,7 +140,7 @@ describe("migrateResponseBody", () => {
     expect(original).toEqual(originalCopy);
   });
 
-  it("throws CadwynError for unknown version", () => {
+  it("throws TsadwynError for unknown version", () => {
     expect(() =>
       migrateResponseBody(
         latestBody,
@@ -148,7 +148,7 @@ describe("migrateResponseBody", () => {
         "9999-12-31",
         versions,
       ),
-    ).toThrow(CadwynError);
+    ).toThrow(TsadwynError);
     expect(() =>
       migrateResponseBody(
         latestBody,

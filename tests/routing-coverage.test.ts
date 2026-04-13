@@ -3,11 +3,11 @@ import { Router } from "express";
 import { z } from "zod";
 
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionedRouter,
-  RootCadwynRouter,
+  RootTsadwynRouter,
   ZodSchemaRegistry,
 } from "../src/index.js";
 import type { RouteDefinition } from "../src/index.js";
@@ -42,10 +42,10 @@ function makeRoute(overrides: Partial<RouteDefinition> = {}): RouteDefinition {
 // ---------------------------------------------------------------------------
 // Section 1: Construction + versionValues getter
 // ---------------------------------------------------------------------------
-describe("RootCadwynRouter: construction and versionValues getter", () => {
+describe("RootTsadwynRouter: construction and versionValues getter", () => {
   it("returns the versionValues passed to the constructor", () => {
     const values = ["2024-01-01", "2023-01-01"];
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: values,
     });
@@ -56,7 +56,7 @@ describe("RootCadwynRouter: construction and versionValues getter", () => {
   });
 
   it("lowercases the apiVersionParameterName", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "X-API-Version",
       versionValues: ["2024-01-01"],
     });
@@ -64,7 +64,7 @@ describe("RootCadwynRouter: construction and versionValues getter", () => {
   });
 
   it("exposes an empty versionedRouters map on construction", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: ["2024-01-01"],
     });
@@ -76,9 +76,9 @@ describe("RootCadwynRouter: construction and versionValues getter", () => {
 // ---------------------------------------------------------------------------
 // Section 2: sortedVersions getter
 // ---------------------------------------------------------------------------
-describe("RootCadwynRouter: sortedVersions getter", () => {
+describe("RootTsadwynRouter: sortedVersions getter", () => {
   it("sorts versions ascending (oldest first) based on versionedRouters keys", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: ["2024-01-01", "2023-06-01", "2023-01-01"],
     });
@@ -97,7 +97,7 @@ describe("RootCadwynRouter: sortedVersions getter", () => {
   });
 
   it("returns unchanged order for already-sorted keys", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: ["2024-01-01", "2023-01-01"],
     });
@@ -111,7 +111,7 @@ describe("RootCadwynRouter: sortedVersions getter", () => {
   });
 
   it("returns a single-version array when only one version is registered", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: ["2024-01-01"],
     });
@@ -124,7 +124,7 @@ describe("RootCadwynRouter: sortedVersions getter", () => {
   });
 
   it("returns an empty array when versionValues and versionedRouters are empty", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: [],
     });
@@ -136,9 +136,9 @@ describe("RootCadwynRouter: sortedVersions getter", () => {
 // ---------------------------------------------------------------------------
 // Section 3: setVersionedRouters + getRouter + hasVersion
 // ---------------------------------------------------------------------------
-describe("RootCadwynRouter: setVersionedRouters / getRouter / hasVersion", () => {
+describe("RootTsadwynRouter: setVersionedRouters / getRouter / hasVersion", () => {
   it("stores routers set via setVersionedRouters and returns them via getRouter", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: ["2024-01-01", "2023-01-01"],
     });
@@ -155,7 +155,7 @@ describe("RootCadwynRouter: setVersionedRouters / getRouter / hasVersion", () =>
   });
 
   it("getRouter returns undefined for unknown versions", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: ["2024-01-01"],
     });
@@ -167,7 +167,7 @@ describe("RootCadwynRouter: setVersionedRouters / getRouter / hasVersion", () =>
   });
 
   it("hasVersion reflects registered versions", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: ["2024-01-01"],
     });
@@ -180,7 +180,7 @@ describe("RootCadwynRouter: setVersionedRouters / getRouter / hasVersion", () =>
   });
 
   it("setVersionedRouters clears previous entries before writing the new map", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: ["2024-01-01", "2023-01-01"],
     });
@@ -200,7 +200,7 @@ describe("RootCadwynRouter: setVersionedRouters / getRouter / hasVersion", () =>
   });
 
   it("exposes the underlying versionedRouters map", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: ["2024-01-01"],
     });
@@ -217,9 +217,9 @@ describe("RootCadwynRouter: setVersionedRouters / getRouter / hasVersion", () =>
 // ---------------------------------------------------------------------------
 // Section 4: setOpenAPIData + buildOpenAPI
 // ---------------------------------------------------------------------------
-describe("RootCadwynRouter: setOpenAPIData and buildOpenAPI", () => {
+describe("RootTsadwynRouter: setOpenAPIData and buildOpenAPI", () => {
   it("buildOpenAPI returns a document with info/title/version/paths for a known version", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: ["2024-01-01"],
     });
@@ -249,7 +249,7 @@ describe("RootCadwynRouter: setOpenAPIData and buildOpenAPI", () => {
   });
 
   it("buildOpenAPI works when the registry for a version is missing", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: ["2024-01-01"],
     });
@@ -268,7 +268,7 @@ describe("RootCadwynRouter: setOpenAPIData and buildOpenAPI", () => {
   });
 
   it("buildOpenAPI honors includeChangelogUrlInSchema=false and a null changelogUrl", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: ["2024-01-01"],
     });
@@ -286,7 +286,7 @@ describe("RootCadwynRouter: setOpenAPIData and buildOpenAPI", () => {
   });
 
   it("buildOpenAPI still returns a document for a version not present in versionedSchemas", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: ["2024-01-01"],
     });
@@ -312,9 +312,9 @@ describe("RootCadwynRouter: setOpenAPIData and buildOpenAPI", () => {
 // ---------------------------------------------------------------------------
 // Section 5: dispatch() edge cases
 // ---------------------------------------------------------------------------
-describe("RootCadwynRouter: dispatch()", () => {
+describe("RootTsadwynRouter: dispatch()", () => {
   it("dispatch returns true and invokes the matching versioned router", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: ["2024-01-01"],
     });
@@ -361,7 +361,7 @@ describe("RootCadwynRouter: dispatch()", () => {
   });
 
   it("dispatch returns false for an unknown version without invoking next", () => {
-    const router = new RootCadwynRouter({
+    const router = new RootTsadwynRouter({
       apiVersionParameterName: "x-api-version",
       versionValues: ["2024-01-01"],
     });
@@ -381,15 +381,15 @@ describe("RootCadwynRouter: dispatch()", () => {
 });
 
 // ---------------------------------------------------------------------------
-// Section 6: Integration via full Cadwyn app
+// Section 6: Integration via full Tsadwyn app
 // ---------------------------------------------------------------------------
-describe("RootCadwynRouter: integration with Cadwyn application", () => {
-  it("Cadwyn app creates and populates an internal RootCadwynRouter", () => {
+describe("RootTsadwynRouter: integration with Tsadwyn application", () => {
+  it("Tsadwyn app creates and populates an internal RootTsadwynRouter", () => {
     const router = new VersionedRouter();
     const PingResponse = z.object({ ok: z.boolean() }).named("PingResponse");
     router.get("/ping", null, PingResponse, async () => ({ ok: true }));
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2024-01-01"),
         new Version("2023-01-01"),
@@ -404,10 +404,10 @@ describe("RootCadwynRouter: integration with Cadwyn application", () => {
     expect(versionedRouters.has("2024-01-01")).toBe(true);
     expect(versionedRouters.has("2023-01-01")).toBe(true);
 
-    // Reach through to exercise the RootCadwynRouter getters used by the
+    // Reach through to exercise the RootTsadwynRouter getters used by the
     // integration path between application.ts and routing.ts.
-    const rootRouter = (app as any)._rootRouter as RootCadwynRouter;
-    expect(rootRouter).toBeInstanceOf(RootCadwynRouter);
+    const rootRouter = (app as any)._rootRouter as RootTsadwynRouter;
+    expect(rootRouter).toBeInstanceOf(RootTsadwynRouter);
     expect(rootRouter.apiVersionParameterName).toBe("x-api-version");
     expect(rootRouter.versionValues).toEqual(["2024-01-01", "2023-01-01"]);
     expect(rootRouter.sortedVersions).toEqual(["2023-01-01", "2024-01-01"]);

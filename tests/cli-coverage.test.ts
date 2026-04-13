@@ -144,7 +144,7 @@ describe("CLI: --help", () => {
 // --- Section 3: codegen happy path ---
 
 describe("CLI: runCodegen happy path", () => {
-  it("loads a default-export Cadwyn app and prints version + router summary", async () => {
+  it("loads a default-export Tsadwyn app and prints version + router summary", async () => {
     const result = await runCodegen({ app: HAPPY_APP });
     expect(result.exitCode).toBe(0);
     const text = result.output.join("\n");
@@ -226,14 +226,14 @@ describe("CLI: runCodegen error handling", () => {
     const result = await runCodegen({ app: NO_APP });
     expect(result.exitCode).toBe(1);
     const text = result.output.join("\n");
-    expect(text).toContain("Could not find a Cadwyn app export");
+    expect(text).toContain("Could not find a Tsadwyn app export");
   });
 
-  it("returns exit code 1 when the export is not a Cadwyn instance", async () => {
+  it("returns exit code 1 when the export is not a Tsadwyn instance", async () => {
     const result = await runCodegen({ app: BAD_APP });
     expect(result.exitCode).toBe(1);
     const text = result.output.join("\n");
-    expect(text).toContain("does not appear to be a Cadwyn instance");
+    expect(text).toContain("does not appear to be a Tsadwyn instance");
   });
 
   it("returns exit code 1 when the module throws at import time", async () => {
@@ -254,7 +254,7 @@ describe("CLI: runCodegen error handling", () => {
     ]);
     expect(res.error?.exitCode).toBe(1);
     expect(res.error?.code).toBe("tsadwyn.codegenFailed");
-    expect(joined(res.stderr)).toContain("Could not find a Cadwyn app export");
+    expect(joined(res.stderr)).toContain("Could not find a Tsadwyn app export");
   });
 });
 
@@ -426,16 +426,16 @@ describe("CLI: runInfo error handling", () => {
     expect(result.output.join("\n")).toMatch(/Error during info lookup/);
   });
 
-  it("returns exit code 1 when the module exports no Cadwyn app", async () => {
+  it("returns exit code 1 when the module exports no Tsadwyn app", async () => {
     const result = await runInfo({ app: NO_APP });
     expect(result.exitCode).toBe(1);
-    expect(result.output.join("\n")).toContain("Could not find a Cadwyn app export");
+    expect(result.output.join("\n")).toContain("Could not find a Tsadwyn app export");
   });
 
-  it("returns exit code 1 when the export is not a Cadwyn instance", async () => {
+  it("returns exit code 1 when the export is not a Tsadwyn instance", async () => {
     const result = await runInfo({ app: BAD_APP });
     expect(result.exitCode).toBe(1);
-    expect(result.output.join("\n")).toContain("Could not find a Cadwyn app export");
+    expect(result.output.join("\n")).toContain("Could not find a Tsadwyn app export");
   });
 
   it("returns exit code 1 when the version is unknown", async () => {
@@ -489,7 +489,7 @@ describe("CLI: temp-file fixtures", () => {
     writeFileSync(file, "export const foo = 1;\n");
     const result = await runInfo({ app: file });
     expect(result.exitCode).toBe(1);
-    expect(result.output.join("\n")).toContain("Could not find a Cadwyn app export");
+    expect(result.output.join("\n")).toContain("Could not find a Tsadwyn app export");
   });
 });
 

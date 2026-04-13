@@ -27,7 +27,7 @@ export interface FieldHadOptions {
   multipleOf?: number;
   int?: boolean;
 
-  // T-1800: Additional Zod-mappable attributes ported from Python Cadwyn
+  // T-1800: Additional Zod-mappable attributes ported from Python Tsadwyn
   /**
    * Title metadata. Stored as custom metadata on the Zod schema.
    * In JSON Schema output, this maps to the "title" field.
@@ -52,7 +52,7 @@ export interface FieldHadOptions {
   // ────────────────────────────────────────────────────────────────────────
   // Pydantic-specific attributes that have NO Zod equivalent (N/A).
   // These are documented here for completeness and to match the Python
-  // Cadwyn API surface. They are accepted but ignored at schema-generation
+  // Tsadwyn API surface. They are accepted but ignored at schema-generation
   // time because Zod does not have equivalent concepts.
   // ────────────────────────────────────────────────────────────────────────
 
@@ -468,7 +468,7 @@ export class AlterFieldInstructionFactory {
 
     // N/A Pydantic-specific attributes are intentionally ignored at runtime.
     // They are accepted by the FieldHadOptions interface for API compatibility
-    // with Python Cadwyn but have no effect on Zod schemas.
+    // with Python Tsadwyn but have no effect on Zod schemas.
 
     return instruction;
   }

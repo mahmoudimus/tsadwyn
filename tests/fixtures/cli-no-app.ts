@@ -1,5 +1,5 @@
 /**
- * Fixture with no Cadwyn app export. Used to exercise the CLI's "not a
- * Cadwyn app" error branch.
+ * Fixture with no Tsadwyn app export. Used to exercise the CLI's "not a
+ * Tsadwyn app" error branch.
  */
 export const foo = 1;

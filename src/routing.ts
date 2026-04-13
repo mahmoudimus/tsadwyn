@@ -1,9 +1,8 @@
 /**
  * T-1303: Internal routing module.
  *
- * Provides the RootCadwynRouter class that manages the collection of versioned
- * Express routers. This is the TypeScript equivalent of Cadwyn's
- * _RootCadwynAPIRouter from cadwyn/routing.py.
+ * Provides the RootTsadwynRouter class that manages the collection of versioned
+ * Express routers.
  */
 
 import { Router, Request, Response, NextFunction } from "express";
@@ -13,9 +12,9 @@ import type { RouteDefinition } from "./router.js";
 import type { ZodSchemaRegistry } from "./schema-generation.js";
 
 /**
- * Options for constructing a RootCadwynRouter.
+ * Options for constructing a RootTsadwynRouter.
  */
-export interface RootCadwynRouterOptions {
+export interface RootTsadwynRouterOptions {
   /** The header/parameter name used for API version selection. */
   apiVersionParameterName: string;
   /** All known API version values, ordered newest-first. */
@@ -23,14 +22,14 @@ export interface RootCadwynRouterOptions {
 }
 
 /**
- * RootCadwynRouter manages the collection of versioned Express routers and
+ * RootTsadwynRouter manages the collection of versioned Express routers and
  * provides OpenAPI schema aggregation across versions.
  *
- * This class is used internally by the Cadwyn application class to organize
- * versioned routing. It is the TypeScript equivalent of Cadwyn's
- * _RootCadwynAPIRouter.
+ * This class is used internally by the Tsadwyn application class to organize
+ * versioned routing. It is the TypeScript equivalent of Tsadwyn's
+ * _RootTsadwynAPIRouter.
  */
-export class RootCadwynRouter {
+export class RootTsadwynRouter {
   /**
    * Map of version string to the Express Router for that version.
    */
@@ -56,7 +55,7 @@ export class RootCadwynRouter {
    */
   private _routes: RouteDefinition[] = [];
 
-  constructor(options: RootCadwynRouterOptions) {
+  constructor(options: RootTsadwynRouterOptions) {
     this.apiVersionParameterName = options.apiVersionParameterName.toLowerCase();
     this._versionValues = options.versionValues;
   }
@@ -70,7 +69,7 @@ export class RootCadwynRouter {
 
   /**
    * Get the sorted list of versions (oldest to newest).
-   * Mirrors the Python _RootCadwynAPIRouter.versions cached_property.
+   * Mirrors the Python _RootTsadwynAPIRouter.versions cached_property.
    */
   get sortedVersions(): string[] {
     return [...this.versionedRouters.keys()].sort();

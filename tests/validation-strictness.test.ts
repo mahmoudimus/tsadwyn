@@ -1,7 +1,7 @@
 /**
  * Phase 16: Validation Strictness (T-1600 through T-1608)
  *
- * Tests that tsadwyn properly rejects invalid input that Cadwyn also rejects.
+ * Tests that tsadwyn properly rejects invalid input that Tsadwyn also rejects.
  * These cover silent-failure bugs where tsadwyn accepts invalid input.
  *
  * Run: npx vitest run tests/validation-strictness.test.ts
@@ -10,7 +10,7 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -23,7 +23,7 @@ import {
   RequestInfo,
   ResponseInfo,
   InvalidGenerationInstructionError,
-  CadwynStructureError,
+  TsadwynStructureError,
   RouterGenerationError,
   RouteAlreadyExistsError,
 } from "../src/index.js";
@@ -59,7 +59,7 @@ describe("T-1600: unregistered schema in schema instructions", () => {
       return { value: "hello" };
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", BadChange),
         new Version("2000-01-01"),
@@ -89,7 +89,7 @@ describe("T-1600: unregistered schema in schema instructions", () => {
       return { value: "hello" };
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", GoodChange),
         new Version("2000-01-01"),
@@ -106,7 +106,7 @@ describe("T-1600: unregistered schema in schema instructions", () => {
 // ---------------------------------------------------------------------------
 
 describe("T-1602: double-binding prevention", () => {
-  it("throws CadwynStructureError when a VersionChange is used in two different VersionBundles", () => {
+  it("throws TsadwynStructureError when a VersionChange is used in two different VersionBundles", () => {
     class SharedChange extends VersionChange {
       description = "I am shared between two bundles";
       instructions = [];
@@ -125,7 +125,7 @@ describe("T-1602: double-binding prevention", () => {
           new Version("2025-02-01", SharedChange),
           new Version("2025-01-01"),
         ),
-    ).toThrow(CadwynStructureError);
+    ).toThrow(TsadwynStructureError);
     expect(
       () =>
         new VersionBundle(
@@ -155,7 +155,7 @@ describe("T-1603: endpoint().had() no-op detection", () => {
     const router = new VersionedRouter();
     router.get("/items", null, Res, async () => ({ ok: true }));
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", NoOpChange),
         new Version("2000-01-01"),
@@ -183,7 +183,7 @@ describe("T-1603: endpoint().had() no-op detection", () => {
     const router = new VersionedRouter();
     router.get("/items", null, Res, async () => ({ ok: true }));
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", RealChange),
         new Version("2000-01-01"),
@@ -223,7 +223,7 @@ describe("T-1605: ambiguous endpoint().existed", () => {
       ];
     }
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2001-01-01", RestoreWithoutFuncName),
         new Version("2000-01-01"),

@@ -11,7 +11,7 @@ import request from "supertest";
 import { z } from "zod";
 
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -42,7 +42,7 @@ describe("OpenAPI completeness", () => {
     route.summary = "List all items";
     route.description = "Returns a list of all items in the system.";
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2024-01-01"),
       ),
@@ -81,7 +81,7 @@ describe("OpenAPI completeness", () => {
       return { secret: "shhh" };
     }, { includeInSchema: false });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2024-01-01"),
       ),
@@ -164,7 +164,7 @@ describe("OpenAPI completeness", () => {
       return { id: "1" };
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2024-01-01"),
       ),
@@ -315,7 +315,7 @@ describe("OpenAPI completeness", () => {
       return { id: "1" };
     });
 
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: new VersionBundle(
         new Version("2024-06-01", DeprecateEndpoint),
         new Version("2024-01-01"),

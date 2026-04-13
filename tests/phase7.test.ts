@@ -4,7 +4,7 @@ import { z } from "zod";
 import crypto from "node:crypto";
 
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -14,7 +14,7 @@ import {
   convertResponseToPreviousVersionFor,
   RequestInfo,
   ResponseInfo,
-  CadwynStructureError,
+  TsadwynStructureError,
   apiVersionStorage,
 } from "../src/index.js";
 
@@ -105,7 +105,7 @@ describe("T-700: apiVersionLocation", () => {
   describe("custom_header (default)", () => {
     it("extracts version from header (existing behavior)", async () => {
       clearDb();
-      const app = new Cadwyn({ versions: makeVersionBundle() });
+      const app = new Tsadwyn({ versions: makeVersionBundle() });
       app.generateAndIncludeVersionedRouters(makeRouter());
 
       const res = await request(app.expressApp)
@@ -121,7 +121,7 @@ describe("T-700: apiVersionLocation", () => {
   describe("path", () => {
     it("extracts version from URL path", async () => {
       clearDb();
-      const app = new Cadwyn({
+      const app = new Tsadwyn({
         versions: makeVersionBundle(),
         apiVersionLocation: "path",
       });
@@ -137,7 +137,7 @@ describe("T-700: apiVersionLocation", () => {
 
     it("handles new version via path", async () => {
       clearDb();
-      const app = new Cadwyn({
+      const app = new Tsadwyn({
         versions: makeVersionBundle(),
         apiVersionLocation: "path",
       });
@@ -153,7 +153,7 @@ describe("T-700: apiVersionLocation", () => {
 
     it("defaults to latest version when path has no version prefix", async () => {
       clearDb();
-      const app = new Cadwyn({
+      const app = new Tsadwyn({
         versions: makeVersionBundle(),
         apiVersionLocation: "path",
       });
@@ -170,12 +170,12 @@ describe("T-700: apiVersionLocation", () => {
 
     it("throws when apiVersionDefaultValue is used with path location", () => {
       expect(() => {
-        new Cadwyn({
+        new Tsadwyn({
           versions: makeVersionBundle(),
           apiVersionLocation: "path",
           apiVersionDefaultValue: "2000-01-01",
         });
-      }).toThrow(CadwynStructureError);
+      }).toThrow(TsadwynStructureError);
     });
   });
 });
@@ -188,7 +188,7 @@ describe("T-701: apiVersionFormat", () => {
   describe("date (default)", () => {
     it("accepts valid date versions", () => {
       expect(() => {
-        new Cadwyn({
+        new Tsadwyn({
           versions: new VersionBundle(
             new Version("2001-01-01"),
             new Version("2000-01-01"),
@@ -199,7 +199,7 @@ describe("T-701: apiVersionFormat", () => {
 
     it("rejects non-date version strings", () => {
       expect(() => {
-        new Cadwyn({
+        new Tsadwyn({
           versions: new VersionBundle(
             new Version("v2"),
             new Version("v1"),
@@ -207,12 +207,12 @@ describe("T-701: apiVersionFormat", () => {
           ),
           apiVersionFormat: "date",
         });
-      }).toThrow(CadwynStructureError);
+      }).toThrow(TsadwynStructureError);
     });
 
     it("rejects versions not sorted newest-first", () => {
       expect(() => {
-        new Cadwyn({
+        new Tsadwyn({
           versions: new VersionBundle(
             new Version("2000-01-01"),
             new Version("2001-01-01"),
@@ -220,14 +220,14 @@ describe("T-701: apiVersionFormat", () => {
           ),
           apiVersionFormat: "date",
         });
-      }).toThrow(CadwynStructureError);
+      }).toThrow(TsadwynStructureError);
     });
   });
 
   describe("string", () => {
     it("accepts any string versions when using string format", () => {
       expect(() => {
-        new Cadwyn({
+        new Tsadwyn({
           versions: new VersionBundle(
             new Version("v2"),
             new Version("v1"),
@@ -242,7 +242,7 @@ describe("T-701: apiVersionFormat", () => {
       // "alpha" < "beta" lexicographically, but VersionBundle with string format
       // still requires descending sort. "beta" > "alpha" is descending.
       expect(() => {
-        new Cadwyn({
+        new Tsadwyn({
           versions: new VersionBundle(
             new Version("beta"),
             new Version("alpha"),
@@ -257,7 +257,7 @@ describe("T-701: apiVersionFormat", () => {
       const router = new VersionedRouter();
       router.get("/ping", null, null, async () => ({ pong: true }));
 
-      const app = new Cadwyn({
+      const app = new Tsadwyn({
         versions: new VersionBundle(
           new Version("v2"),
           new Version("v1"),
@@ -284,7 +284,7 @@ describe("T-701: apiVersionFormat", () => {
 describe("T-702: apiVersionDefaultValue", () => {
   it("uses string default when no version header is provided", async () => {
     clearDb();
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: makeVersionBundle(),
       apiVersionDefaultValue: "2000-01-01",
     });
@@ -301,7 +301,7 @@ describe("T-702: apiVersionDefaultValue", () => {
 
   it("uses function default when no version header is provided", async () => {
     clearDb();
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: makeVersionBundle(),
       apiVersionDefaultValue: (_req) => "2000-01-01",
     });
@@ -317,7 +317,7 @@ describe("T-702: apiVersionDefaultValue", () => {
 
   it("uses async function default", async () => {
     clearDb();
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: makeVersionBundle(),
       apiVersionDefaultValue: async (_req) => "2000-01-01",
     });
@@ -333,7 +333,7 @@ describe("T-702: apiVersionDefaultValue", () => {
 
   it("header takes precedence over default", async () => {
     clearDb();
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: makeVersionBundle(),
       apiVersionDefaultValue: "2000-01-01",
     });
@@ -351,12 +351,12 @@ describe("T-702: apiVersionDefaultValue", () => {
 
   it("throws when used with path location", () => {
     expect(() => {
-      new Cadwyn({
+      new Tsadwyn({
         versions: makeVersionBundle(),
         apiVersionLocation: "path",
         apiVersionDefaultValue: "2000-01-01",
       });
-    }).toThrow(CadwynStructureError);
+    }).toThrow(TsadwynStructureError);
   });
 });
 
@@ -367,7 +367,7 @@ describe("T-702: apiVersionDefaultValue", () => {
 describe("T-703: custom versioningMiddleware", () => {
   it("uses custom middleware for version extraction", async () => {
     clearDb();
-    const app = new Cadwyn({
+    const app = new Tsadwyn({
       versions: makeVersionBundle(),
       versioningMiddleware: (req, res, next) => {
         // Custom: always set version to 2000-01-01 via AsyncLocalStorage
@@ -396,7 +396,7 @@ describe("T-703: custom versioningMiddleware", () => {
 describe("T-704: eager initialization", () => {
   it("generates routers eagerly during generateAndIncludeVersionedRouters", async () => {
     clearDb();
-    const app = new Cadwyn({ versions: makeVersionBundle() });
+    const app = new Tsadwyn({ versions: makeVersionBundle() });
     const router = makeRouter();
     app.generateAndIncludeVersionedRouters(router);
 
@@ -414,7 +414,7 @@ describe("T-704: eager initialization", () => {
 
   it("subsequent requests work after initialization", async () => {
     clearDb();
-    const app = new Cadwyn({ versions: makeVersionBundle() });
+    const app = new Tsadwyn({ versions: makeVersionBundle() });
     app.generateAndIncludeVersionedRouters(makeRouter());
 
     // First request
@@ -440,7 +440,7 @@ describe("T-704: eager initialization", () => {
 
 describe("T-705: unversioned routes", () => {
   it("serves unversioned routes without version header", async () => {
-    const app = new Cadwyn({ versions: makeVersionBundle() });
+    const app = new Tsadwyn({ versions: makeVersionBundle() });
 
     app.unversionedRouter.get("/health", null, null, async () => ({
       status: "ok",
@@ -455,7 +455,7 @@ describe("T-705: unversioned routes", () => {
   });
 
   it("serves unversioned routes even with version header", async () => {
-    const app = new Cadwyn({ versions: makeVersionBundle() });
+    const app = new Tsadwyn({ versions: makeVersionBundle() });
 
     app.unversionedRouter.get("/health", null, null, async () => ({
       status: "ok",
@@ -473,7 +473,7 @@ describe("T-705: unversioned routes", () => {
 
   it("versioned routes still work alongside unversioned ones", async () => {
     clearDb();
-    const app = new Cadwyn({ versions: makeVersionBundle() });
+    const app = new Tsadwyn({ versions: makeVersionBundle() });
 
     app.unversionedRouter.get("/health", null, null, async () => ({
       status: "ok",
@@ -502,7 +502,7 @@ describe("T-705: unversioned routes", () => {
 describe("T-706: dependency overrides", () => {
   it("uses override handler when set", async () => {
     clearDb();
-    const app = new Cadwyn({ versions: makeVersionBundle() });
+    const app = new Tsadwyn({ versions: makeVersionBundle() });
     const router = new VersionedRouter();
 
     const originalHandler = async (req: any) => {
@@ -536,7 +536,7 @@ describe("T-706: dependency overrides", () => {
 
   it("uses original handler when no override is set", async () => {
     clearDb();
-    const app = new Cadwyn({ versions: makeVersionBundle() });
+    const app = new Tsadwyn({ versions: makeVersionBundle() });
     const router = new VersionedRouter();
 
     const originalHandler = async (req: any) => {
@@ -564,7 +564,7 @@ describe("T-706: dependency overrides", () => {
     const originalHealth = async () => ({ status: "ok" });
     const mockHealth = async () => ({ status: "mocked" });
 
-    const app = new Cadwyn({ versions: makeVersionBundle() });
+    const app = new Tsadwyn({ versions: makeVersionBundle() });
     app.unversionedRouter.get("/health", null, null, originalHealth);
     app.dependencyOverrides.set(originalHealth, mockHealth);
     app.generateAndIncludeVersionedRouters(makeRouter());
@@ -577,7 +577,7 @@ describe("T-706: dependency overrides", () => {
 
   it("override can be changed dynamically after initialization", async () => {
     clearDb();
-    const app = new Cadwyn({ versions: makeVersionBundle() });
+    const app = new Tsadwyn({ versions: makeVersionBundle() });
     const router = new VersionedRouter();
 
     const originalHandler = async (req: any) => {

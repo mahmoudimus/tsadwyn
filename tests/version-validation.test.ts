@@ -2,15 +2,15 @@ import { describe, it, expect } from "vitest";
 import { z } from "zod";
 
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
   VersionChangeWithSideEffects,
   schema,
   apiVersionStorage,
-  CadwynError,
-  CadwynStructureError,
+  TsadwynError,
+  TsadwynStructureError,
 } from "../src/index.js";
 
 // Helper schema for instructions
@@ -19,65 +19,65 @@ const TestSchema = z.object({ name: z.string() }).named("TestSchema");
 // --- T-1000: VersionChange validation ---
 
 describe("T-1000: VersionChange validation at definition time", () => {
-  it("throws CadwynStructureError when description is empty", () => {
+  it("throws TsadwynStructureError when description is empty", () => {
     class BadChange extends VersionChange {
       description = "";
       instructions = [];
     }
 
-    expect(() => new Version("2024-01-01", BadChange)).toThrow(CadwynStructureError);
+    expect(() => new Version("2024-01-01", BadChange)).toThrow(TsadwynStructureError);
     expect(() => new Version("2024-01-01", BadChange)).toThrow(
       /description is not set/,
     );
   });
 
-  it("throws CadwynStructureError when description is whitespace only", () => {
+  it("throws TsadwynStructureError when description is whitespace only", () => {
     class WhitespaceChange extends VersionChange {
       description = "   ";
       instructions = [];
     }
 
-    expect(() => new Version("2024-01-01", WhitespaceChange)).toThrow(CadwynStructureError);
+    expect(() => new Version("2024-01-01", WhitespaceChange)).toThrow(TsadwynStructureError);
     expect(() => new Version("2024-01-01", WhitespaceChange)).toThrow(
       /description is not set/,
     );
   });
 
-  it("throws CadwynStructureError when instructions is not an array", () => {
+  it("throws TsadwynStructureError when instructions is not an array", () => {
     class BadInstrChange extends VersionChange {
       description = "Some change";
       instructions = "not an array" as any;
     }
 
-    expect(() => new Version("2024-01-01", BadInstrChange)).toThrow(CadwynStructureError);
+    expect(() => new Version("2024-01-01", BadInstrChange)).toThrow(TsadwynStructureError);
     expect(() => new Version("2024-01-01", BadInstrChange)).toThrow(
       /must be an array/,
     );
   });
 
-  it("throws CadwynStructureError when an instruction has unknown kind", () => {
+  it("throws TsadwynStructureError when an instruction has unknown kind", () => {
     class UnknownInstrChange extends VersionChange {
       description = "Some change";
       instructions = [{ kind: "totally_unknown", foo: "bar" } as any];
     }
 
-    expect(() => new Version("2024-01-01", UnknownInstrChange)).toThrow(CadwynStructureError);
+    expect(() => new Version("2024-01-01", UnknownInstrChange)).toThrow(TsadwynStructureError);
     expect(() => new Version("2024-01-01", UnknownInstrChange)).toThrow(
       /not a recognized instruction type/,
     );
   });
 
-  it("throws CadwynStructureError when an instruction is null", () => {
+  it("throws TsadwynStructureError when an instruction is null", () => {
     class NullInstrChange extends VersionChange {
       description = "Some change";
       instructions = [null as any];
     }
 
-    expect(() => new Version("2024-01-01", NullInstrChange)).toThrow(CadwynStructureError);
+    expect(() => new Version("2024-01-01", NullInstrChange)).toThrow(TsadwynStructureError);
   });
 
-  it("throws CadwynStructureError when VersionChange base class is used directly", () => {
-    expect(() => new Version("2024-01-01", VersionChange as any)).toThrow(CadwynStructureError);
+  it("throws TsadwynStructureError when VersionChange base class is used directly", () => {
+    expect(() => new Version("2024-01-01", VersionChange as any)).toThrow(TsadwynStructureError);
     expect(() => new Version("2024-01-01", VersionChange as any)).toThrow(
       /used directly instead of being subclassed/,
     );
@@ -110,14 +110,14 @@ describe("T-1000: VersionChange validation at definition time", () => {
 // --- T-1001: VersionChangeWithSideEffects ---
 
 describe("T-1001: VersionChangeWithSideEffects", () => {
-  it("isApplied throws CadwynError when not bound to any VersionBundle", () => {
+  it("isApplied throws TsadwynError when not bound to any VersionBundle", () => {
     class UnboundSideEffect extends VersionChangeWithSideEffects {
       description = "Some side effect";
       instructions = [];
     }
 
     // Not bound to any bundle yet
-    expect(() => UnboundSideEffect.isApplied).toThrow(CadwynError);
+    expect(() => UnboundSideEffect.isApplied).toThrow(TsadwynError);
     expect(() => UnboundSideEffect.isApplied).toThrow(
       /never bound to any version/,
     );
@@ -230,7 +230,7 @@ describe("T-1002: VersionChange binding to VersionBundle", () => {
     expect((BoundChange as any)._boundVersion).toBe("2024-02-01");
   });
 
-  it("throws CadwynStructureError when re-binding a VersionChange to a different VersionBundle", () => {
+  it("throws TsadwynStructureError when re-binding a VersionChange to a different VersionBundle", () => {
     class ReusableChange extends VersionChange {
       description = "Reusable change";
       instructions = [];
@@ -249,7 +249,7 @@ describe("T-1002: VersionChange binding to VersionBundle", () => {
         new Version("2025-02-01", ReusableChange),
         new Version("2025-01-01"),
       );
-    }).toThrow(CadwynStructureError);
+    }).toThrow(TsadwynStructureError);
   });
 
   it("allows different VersionChange classes in different bundles", () => {
@@ -292,7 +292,7 @@ describe("T-1003: Version ordering validation", () => {
             new Version("2024-01-01"),
             { apiVersionFormat: "date" },
           ),
-      ).toThrow(CadwynStructureError);
+      ).toThrow(TsadwynStructureError);
       expect(
         () =>
           new VersionBundle(
@@ -311,7 +311,7 @@ describe("T-1003: Version ordering validation", () => {
             new Version("2024-01-01"),
             { apiVersionFormat: "date" },
           ),
-      ).toThrow(CadwynStructureError);
+      ).toThrow(TsadwynStructureError);
     });
 
     it("rejects partial date formats", () => {
@@ -322,7 +322,7 @@ describe("T-1003: Version ordering validation", () => {
             new Version("2024-01-01"),
             { apiVersionFormat: "date" },
           ),
-      ).toThrow(CadwynStructureError);
+      ).toThrow(TsadwynStructureError);
     });
 
     it("throws when versions are not sorted newest-first (date format)", () => {
@@ -333,7 +333,7 @@ describe("T-1003: Version ordering validation", () => {
             new Version("2024-02-01"),
             { apiVersionFormat: "date" },
           ),
-      ).toThrow(CadwynStructureError);
+      ).toThrow(TsadwynStructureError);
       expect(
         () =>
           new VersionBundle(
@@ -365,35 +365,35 @@ describe("T-1003: Version ordering validation", () => {
     });
   });
 
-  describe("via Cadwyn (default date format)", () => {
-    it("validates ISO date format by default in Cadwyn", () => {
+  describe("via Tsadwyn (default date format)", () => {
+    it("validates ISO date format by default in Tsadwyn", () => {
       expect(
         () =>
-          new Cadwyn({
+          new Tsadwyn({
             versions: new VersionBundle(
               new Version("v2"),
               new Version("v1"),
             ),
           }),
-      ).toThrow(CadwynStructureError);
+      ).toThrow(TsadwynStructureError);
     });
 
-    it("validates ordering by default in Cadwyn", () => {
+    it("validates ordering by default in Tsadwyn", () => {
       expect(
         () =>
-          new Cadwyn({
+          new Tsadwyn({
             versions: new VersionBundle(
               new Version("2024-01-01"),
               new Version("2024-02-01"),
             ),
           }),
-      ).toThrow(CadwynStructureError);
+      ).toThrow(TsadwynStructureError);
     });
 
-    it("skips date validation in Cadwyn when apiVersionFormat is 'string'", () => {
+    it("skips date validation in Tsadwyn when apiVersionFormat is 'string'", () => {
       expect(
         () =>
-          new Cadwyn({
+          new Tsadwyn({
             versions: new VersionBundle(
               new Version("v2"),
               new Version("v1"),
@@ -408,11 +408,11 @@ describe("T-1003: Version ordering validation", () => {
 // --- Existing validation still works ---
 
 describe("Existing VersionBundle validation", () => {
-  it("throws CadwynStructureError on empty version list", () => {
-    expect(() => new VersionBundle()).toThrow(CadwynStructureError);
+  it("throws TsadwynStructureError on empty version list", () => {
+    expect(() => new VersionBundle()).toThrow(TsadwynStructureError);
   });
 
-  it("throws CadwynStructureError when oldest version has changes", () => {
+  it("throws TsadwynStructureError when oldest version has changes", () => {
     class SomeChange extends VersionChange {
       description = "A change";
       instructions = [];
@@ -420,20 +420,20 @@ describe("Existing VersionBundle validation", () => {
 
     expect(
       () => new VersionBundle(new Version("2024-01-01", SomeChange)),
-    ).toThrow(CadwynStructureError);
+    ).toThrow(TsadwynStructureError);
     expect(
       () => new VersionBundle(new Version("2024-01-01", SomeChange)),
     ).toThrow(/cannot have any version changes/);
   });
 
-  it("throws CadwynStructureError on duplicate version values", () => {
+  it("throws TsadwynStructureError on duplicate version values", () => {
     expect(
       () =>
         new VersionBundle(
           new Version("2024-01-01"),
           new Version("2024-01-01"),
         ),
-    ).toThrow(CadwynStructureError);
+    ).toThrow(TsadwynStructureError);
     expect(
       () =>
         new VersionBundle(

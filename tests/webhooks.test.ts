@@ -7,7 +7,7 @@ import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { z } from "zod";
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -62,7 +62,7 @@ function createApp() {
     return { object: "list", data: [] };
   });
 
-  const app = new Cadwyn({
+  const app = new Tsadwyn({
     versions: new VersionBundle(
       new Version("2024-11-01", AddMonthlyFee),
       new Version("2024-06-01", AddInvoiceRenamePlan),

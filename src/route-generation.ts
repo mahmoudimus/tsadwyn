@@ -20,7 +20,7 @@ import {
 } from "./structure/data.js";
 import { ZodSchemaRegistry, generateVersionedSchemas } from "./schema-generation.js";
 import {
-  CadwynHeadRequestValidationError,
+  TsadwynHeadRequestValidationError,
   RouteAlreadyExistsError,
   RouterGenerationError,
   RouterPathParamsModifiedError,
@@ -930,7 +930,7 @@ function createVersionedHandler(
           form = Object.entries(body).map(([k, v]) => [k, String(v)] as [string, string]);
         } else if (formType === "multipart") {
           // T-1902: Parse multipart/form-data using multer's memory storage.
-          // Note: file upload handling differs from Cadwyn's Starlette-based approach.
+          // Note: file upload handling differs from Tsadwyn's Starlette-based approach.
           // Starlette integrates multipart parsing natively, while here we rely on
           // multer's middleware. We run multer inline (as a promise) so that parsed
           // fields/files are available before request migrations execute.
@@ -1016,7 +1016,7 @@ function createVersionedHandler(
         if (headRequestSchema && body !== undefined && body !== null) {
           const headParseResult = headRequestSchema.safeParse(body);
           if (!headParseResult.success) {
-            throw new CadwynHeadRequestValidationError(
+            throw new TsadwynHeadRequestValidationError(
               headParseResult.error.errors,
               body,
               currentVersion,
@@ -1115,7 +1115,7 @@ function createVersionedHandler(
     } catch (err) {
       // T-1900: Intercept HttpError (or error-like objects with statusCode) and
       // run response migrations with migrateHttpErrors=true before sending the
-      // error response. This mirrors Cadwyn's HTTPException interception.
+      // error response. This mirrors Tsadwyn's HTTPException interception.
       if (_isHttpLikeError(err)) {
         const httpErr = err as { statusCode: number; body?: any; message?: string; headers?: Record<string, string> };
         const errStatusCode = httpErr.statusCode;

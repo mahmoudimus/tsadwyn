@@ -5,7 +5,7 @@ import crypto from "node:crypto";
 
 // Import tsadwyn - this also patches Zod with .named()
 import {
-  Cadwyn,
+  Tsadwyn,
   Version,
   VersionBundle,
   VersionChange,
@@ -87,7 +87,7 @@ function createApp() {
     }
   }
 
-  const app = new Cadwyn({
+  const app = new Tsadwyn({
     versions: new VersionBundle(
       new Version("2001-01-01", ChangeAddressToList),
       new Version("2000-01-01"),
