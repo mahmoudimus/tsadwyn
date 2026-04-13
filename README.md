@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/mahmoudimus/tsadwyn/actions/workflows/ci.yml/badge.svg)](https://github.com/mahmoudimus/tsadwyn/actions/workflows/ci.yml)
 
-Stripe-like API versioning for TypeScript/Express. tsadwyn enables you to maintain a single codebase that serves multiple API versions simultaneously. Instead of duplicating routes for each version, you define version changes declaratively and tsadwyn generates versioned routers with automatic request/response migration.
+Stripe-like API versioning for TypeScript/Express. tsadwyn is a TypeScript port of [Cadwyn](https://github.com/zmievsa/cadwyn) by Stanislav Zmiev — it enables you to maintain a single codebase that serves multiple API versions simultaneously. Instead of duplicating routes for each version, you define version changes declaratively and tsadwyn generates versioned routers with automatic request/response migration.
 
 ## Installation
 
@@ -99,7 +99,7 @@ tsadwyn automatically migrates requests from old versions to the latest format b
 - **convertRequestToNextVersionFor**: Migrate request bodies from old to new format
 - **convertResponseToPreviousVersionFor**: Migrate response bodies from new to old format
 
-For deeper background on the head-first API versioning pattern, see the [concept docs](https://docs.cadwyn.dev/).
+For full documentation on the head-first API versioning pattern, see the [Cadwyn docs](https://docs.cadwyn.dev/) — the concepts carry over directly.
 
 ## API Reference
 
