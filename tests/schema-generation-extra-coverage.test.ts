@@ -1191,6 +1191,29 @@ describe("Section 10: applyFieldConstraints extra branches", () => {
     expect(v1.shape.name.constructor.name).toBe("ZodNullable");
   });
 
+  it("nullable: false unwraps ZodNullable (field was non-nullable at legacy)", () => {
+    // Head schema has a nullable field; at legacy the field did NOT
+    // accept null. `had({ nullable: false })` unwraps ZodNullable.
+    const S = z
+      .object({ name: z.string().nullable() })
+      .named("SGExtra_S10NullableFalse");
+    const versions = runTwoVersionGen(
+      { SGExtra_S10NullableFalse: S },
+      [schema(S).field("name").had({ nullable: false })],
+    );
+    const v1 = versions
+      .get("2000-01-01")!
+      .get("SGExtra_S10NullableFalse")!.schema as ZodObject<any>;
+    expect(v1.shape.name.constructor.name).toBe("ZodString");
+    expect(v1.safeParse({ name: null }).success).toBe(false);
+    expect(v1.safeParse({ name: "alice" }).success).toBe(true);
+    // Head version still accepts null.
+    const v2 = versions
+      .get("2001-01-01")!
+      .get("SGExtra_S10NullableFalse")!.schema as ZodObject<any>;
+    expect(v2.safeParse({ name: null }).success).toBe(true);
+  });
+
   it("optional: true wraps the type in ZodOptional", () => {
     const S = z.object({ name: z.string() }).named("SGExtra_S10Optional");
     const versions = runTwoVersionGen(
@@ -1199,6 +1222,50 @@ describe("Section 10: applyFieldConstraints extra branches", () => {
     );
     const v1 = versions.get("2000-01-01")!.get("SGExtra_S10Optional")!.schema as ZodObject<any>;
     expect(v1.shape.name.constructor.name).toBe("ZodOptional");
+  });
+
+  it("optional: false unwraps ZodOptional (field was required at legacy)", () => {
+    // Head schema has an optional field; at the previous (legacy) version
+    // this field was REQUIRED. `had({ optional: false })` should unwrap
+    // the ZodOptional so legacy-pinned clients must send the field.
+    const S = z
+      .object({ name: z.string().optional() })
+      .named("SGExtra_S10OptionalFalse");
+    const versions = runTwoVersionGen(
+      { SGExtra_S10OptionalFalse: S },
+      [schema(S).field("name").had({ optional: false })],
+    );
+    const v1 = versions
+      .get("2000-01-01")!
+      .get("SGExtra_S10OptionalFalse")!.schema as ZodObject<any>;
+    // Unwrapped to the inner type — ZodString, not ZodOptional.
+    expect(v1.shape.name.constructor.name).toBe("ZodString");
+    // Legacy schema rejects a missing field.
+    expect(v1.safeParse({}).success).toBe(false);
+    // Legacy schema accepts the field.
+    expect(v1.safeParse({ name: "alice" }).success).toBe(true);
+    // Head version keeps the optional wrapper.
+    const v2 = versions
+      .get("2001-01-01")!
+      .get("SGExtra_S10OptionalFalse")!.schema as ZodObject<any>;
+    expect(v2.shape.name.constructor.name).toBe("ZodOptional");
+    expect(v2.safeParse({}).success).toBe(true);
+  });
+
+  it("optional: false is a no-op when the field is already required", () => {
+    // If head is already non-optional, `optional: false` has no effect —
+    // the type stays as-is. Consistent with other idempotent constraints.
+    const S = z
+      .object({ name: z.string() })
+      .named("SGExtra_S10OptionalFalseNoop");
+    const versions = runTwoVersionGen(
+      { SGExtra_S10OptionalFalseNoop: S },
+      [schema(S).field("name").had({ optional: false })],
+    );
+    const v1 = versions
+      .get("2000-01-01")!
+      .get("SGExtra_S10OptionalFalseNoop")!.schema as ZodObject<any>;
+    expect(v1.shape.name.constructor.name).toBe("ZodString");
   });
 
   it("default wraps the type in ZodDefault", () => {

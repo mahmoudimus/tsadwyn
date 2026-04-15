@@ -983,6 +983,82 @@ describe("Section 7: schema validation behavior", () => {
     expect(bad.body.detail).toBeDefined();
   });
 
+  it("28a. had({ optional: false }) tightens a head-optional field to required at legacy", async () => {
+    // Head: {amount: string, memo: string.optional()}
+    // Legacy: {amount: string, memo: string}  — memo was REQUIRED at legacy.
+    // Sending a legacy-pinned request WITHOUT memo must return 422.
+    const Req = z
+      .object({ amount: z.string(), memo: z.string().optional() })
+      .named(uniq("OptFalseReq"));
+    const Res = z.object({ ok: z.boolean() }).named(uniq("OptFalseRes"));
+
+    class Change extends VersionChange {
+      description = "memo was required at legacy";
+      instructions = [schema(Req).field("memo").had({ optional: false })];
+    }
+
+    const app = makeApp([Change], (r) => {
+      r.post("/optfalse", Req, Res, async () => ({ ok: true }));
+    });
+
+    // Legacy pin + missing memo → 422
+    const rejected = await request(app.expressApp)
+      .post("/optfalse")
+      .set("x-api-version", "2000-01-01")
+      .send({ amount: "10" });
+    expect(rejected.status).toBe(422);
+    expect(rejected.body.detail).toBeDefined();
+
+    // Legacy pin + memo provided → 200
+    const ok = await request(app.expressApp)
+      .post("/optfalse")
+      .set("x-api-version", "2000-01-01")
+      .send({ amount: "10", memo: "hi" });
+    expect(ok.status).toBe(200);
+
+    // Head pin + missing memo → 200 (still optional at head)
+    const okHead = await request(app.expressApp)
+      .post("/optfalse")
+      .set("x-api-version", "2001-01-01")
+      .send({ amount: "10" });
+    expect(okHead.status).toBe(200);
+  });
+
+  it("28b. had({ nullable: false }) tightens a head-nullable field to non-nullable at legacy", async () => {
+    const Req = z
+      .object({ amount: z.string(), memo: z.string().nullable() })
+      .named(uniq("NullFalseReq"));
+    const Res = z.object({ ok: z.boolean() }).named(uniq("NullFalseRes"));
+
+    class Change extends VersionChange {
+      description = "memo was non-nullable at legacy";
+      instructions = [schema(Req).field("memo").had({ nullable: false })];
+    }
+
+    const app = makeApp([Change], (r) => {
+      r.post("/nullfalse", Req, Res, async () => ({ ok: true }));
+    });
+
+    const rejected = await request(app.expressApp)
+      .post("/nullfalse")
+      .set("x-api-version", "2000-01-01")
+      .send({ amount: "10", memo: null });
+    expect(rejected.status).toBe(422);
+
+    const ok = await request(app.expressApp)
+      .post("/nullfalse")
+      .set("x-api-version", "2000-01-01")
+      .send({ amount: "10", memo: "hi" });
+    expect(ok.status).toBe(200);
+
+    // Head pin + null memo → 200 (still nullable)
+    const okHead = await request(app.expressApp)
+      .post("/nullfalse")
+      .set("x-api-version", "2001-01-01")
+      .send({ amount: "10", memo: null });
+    expect(okHead.status).toBe(200);
+  });
+
   it("28. validates query params against querySchema (422 on failure)", async () => {
     const Res = z
       .object({ n: z.number() })

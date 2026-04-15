@@ -712,11 +712,22 @@ function applyFieldConstraints(fieldType: ZodTypeAny, instruction: FieldHadInstr
   // nullable
   if (instruction.nullable === true) {
     result = result.nullable();
+  } else if (instruction.nullable === false && result instanceof ZodNullable) {
+    // Unwrap ZodNullable — the field was NON-nullable at the previous version.
+    result = (result._def as { innerType: ZodTypeAny }).innerType;
   }
 
   // optional
   if (instruction.optional === true) {
     result = result.optional();
+  } else if (instruction.optional === false && result instanceof ZodOptional) {
+    // Unwrap ZodOptional — the field was REQUIRED at the previous version.
+    // Symmetric to `optional: true` above; used when a head-version field
+    // that is optional needs to be tightened to required for legacy
+    // clients (e.g., a compliance-sensitive identifier that legacy callers
+    // always sent, but head made optional because a newer code path
+    // supplies it implicitly).
+    result = (result._def as { innerType: ZodTypeAny }).innerType;
   }
 
   // default
