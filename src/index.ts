@@ -1,6 +1,6 @@
 // Ensure Zod is extended with .named() before anything else
 import "./zod-extend.js";
-export { getSchemaName, setSchemaName } from "./zod-extend.js";
+export { getSchemaName, setSchemaName, named } from "./zod-extend.js";
 
 // Public API surface for tsadwyn
 export { Tsadwyn } from "./application.js";

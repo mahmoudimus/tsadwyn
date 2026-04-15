@@ -94,6 +94,16 @@ export interface RouteOptions {
   paramsSchema?: ZodTypeAny;
   /** T-601: Zod schema for validating query parameters. */
   querySchema?: ZodTypeAny;
+  /**
+   * HTTP status code to emit on successful responses. Defaults to 200.
+   *
+   * Set to `201` for POST routes that create a resource, `202` for routes
+   * that enqueue async work, etc. When omitted, tsadwyn emits 200 for
+   * every success path — the OpenAPI spec reflects the same default, so
+   * overriding here is the single source of truth for both runtime status
+   * and schema documentation.
+   */
+  statusCode?: number;
   /** T-2001: Whether to include this route in the OpenAPI schema. Default: true. */
   includeInSchema?: boolean;
   /** T-2002: Custom responses dict for OpenAPI. */
@@ -161,7 +171,7 @@ export class VersionedRouter {
       handler,
       funcName: handler.name || null,
       tags: [],
-      statusCode: 200,
+      statusCode: options?.statusCode ?? 200,
       deprecated: false,
       summary: "",
       description: "",

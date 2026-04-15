@@ -27,6 +27,30 @@ export function setSchemaName(schema: z.ZodTypeAny, name: string): void {
 }
 
 /**
+ * Tag a Zod schema with a tsadwyn name and return it unchanged.
+ *
+ * Ergonomic alternative to `schema.named('…')` for downstream consumers
+ * where the ambient `declare module "zod"` augmentation isn't picked up
+ * cleanly (e.g. packages installed via `file:` or `npm link` where
+ * TypeScript's type-resolution doesn't always load the augmentation).
+ *
+ * ```ts
+ * import { z } from "zod";
+ * import { named } from "tsadwyn";
+ *
+ * const User = named(z.object({ id: z.string() }), "User");
+ * ```
+ *
+ * Equivalent at runtime to `schema.named(name)`; differs only in that
+ * the returned value is the same schema instance without any type-level
+ * assumption about the `.named` method being present.
+ */
+export function named<T extends z.ZodTypeAny>(schema: T, name: string): T {
+  setSchemaName(schema, name);
+  return schema;
+}
+
+/**
  * Extend all ZodType instances with a `.named()` method that attaches
  * a name to the schema for use with tsadwyn's versioning system.
  *
