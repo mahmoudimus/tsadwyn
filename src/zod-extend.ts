@@ -54,12 +54,26 @@ export function named<T extends z.ZodTypeAny>(schema: T, name: string): T {
  * Extend all ZodType instances with a `.named()` method that attaches
  * a name to the schema for use with tsadwyn's versioning system.
  *
- * This must be imported before using `.named()` on any Zod schema.
+ * Both `_tsadwynName` and `named` are declared OPTIONAL on the
+ * augmented interface. The prototype patch below assigns `.named()` at
+ * runtime on every ZodType instance, but typing it as required on the
+ * interface is too strict: downstream packages that depend on tsadwyn
+ * but also use raw zod schemas elsewhere (e.g. for request/response
+ * validation in code paths that don't touch tsadwyn's versioning) would
+ * see every `z.object({...})` flagged as "missing `named`" when passed
+ * to a function typed as `ZodTypeAny`. Marking it optional preserves
+ * the runtime behavior while letting raw zod values flow through
+ * tsadwyn's typed APIs without a cast.
+ *
+ * Callers who want to rely on `.named()` being present can either:
+ *   - call `.named!(...)`  (non-null assertion — runtime is patched)
+ *   - use the `named(schema, name)` exported helper, which returns the
+ *     input type unchanged and doesn't require the augmentation.
  */
 declare module "zod" {
   interface ZodType<Output = any, Def extends z.ZodTypeDef = z.ZodTypeDef, Input = Output> {
     _tsadwynName?: string;
-    named(name: string): this;
+    named?(name: string): this;
   }
 }
 
