@@ -77,6 +77,25 @@ export interface TsadwynOptions {
    */
   versioningMiddleware?: (req: Request, res: Response, next: NextFunction) => void;
 
+  /**
+   * Consumer middleware that runs BEFORE versionPickingMiddleware. Useful for
+   * authentication or other request enrichment that must happen before the
+   * default-version resolver runs — e.g., an `apiVersionDefaultValue`
+   * implemented via `perClientDefaultVersion()` needs `req.user` to be
+   * populated by upstream auth.
+   *
+   * Scope: only runs for requests that will reach versioned dispatch — utility
+   * endpoints (OpenAPI JSON, docs, redoc, changelog) bypass this hook.
+   *
+   * Mutually exclusive with `versioningMiddleware`. The constructor throws
+   * `TsadwynStructureError` if both are supplied (when you own the full
+   * picker, there's no built-in pick to run before).
+   *
+   * Inside this middleware, `apiVersionStorage.getStore()` is undefined —
+   * the version hasn't been resolved yet.
+   */
+  preVersionPick?: (req: Request, res: Response, next: NextFunction) => void;
+
   /** Application title used in OpenAPI docs. */
   title?: string;
   /** Application description used in OpenAPI docs. */
@@ -296,10 +315,47 @@ export class Tsadwyn {
     this.expressApp = express();
     this.expressApp.use(express.json());
 
+    // Mutual-exclusion check: preVersionPick only makes sense when the
+    // built-in picker is in use; versioningMiddleware is a full override.
+    if (options.preVersionPick && this._customVersioningMiddleware) {
+      throw new TsadwynStructureError(
+        "preVersionPick cannot be combined with versioningMiddleware. " +
+          "When you supply a full versioningMiddleware override, it replaces " +
+          "the built-in version picker entirely — there's no built-in pick to " +
+          "run before. Merge your preVersionPick logic into the custom " +
+          "versioningMiddleware instead.",
+      );
+    }
+
     // Set up version picking middleware
     if (this._customVersioningMiddleware) {
       this.expressApp.use(this._customVersioningMiddleware);
     } else {
+      // preVersionPick (if supplied) runs BEFORE versionPickingMiddleware so
+      // async enrichment (auth, tenant resolution) happens before the
+      // default-version resolver. Utility endpoints (OpenAPI, docs) are
+      // excluded via path-check — they read version from query/header
+      // directly and don't need the hook.
+      if (options.preVersionPick) {
+        const preHook = options.preVersionPick;
+        const utilityPaths = [
+          this.openApiUrl,
+          this.docsUrl,
+          this.redocUrl,
+          this.changelogUrl,
+        ].filter((p): p is string => typeof p === "string");
+        this.expressApp.use((req: Request, res: Response, next: NextFunction) => {
+          const path = req.path;
+          if (
+            utilityPaths.some(
+              (p) => path === p || path.startsWith(p + "/"),
+            )
+          ) {
+            return next();
+          }
+          preHook(req, res, next);
+        });
+      }
       const pickingOpts: VersionPickingOptions = {
         headerName: this.apiVersionHeaderName,
         apiVersionLocation: this.apiVersionLocation,
