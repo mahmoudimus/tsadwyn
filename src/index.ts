@@ -102,6 +102,22 @@ export {
 // T-1701: Standalone response migration utility
 export { migrateResponseBody } from "./migrate.js";
 
+// Per-client default version resolver (pairs with preVersionPick)
+export { perClientDefaultVersion } from "./per-client-default.js";
+export type { PerClientDefaultVersionOptions } from "./per-client-default.js";
+
+// Behavior-map helper for per-version behavior branching in handlers
+export { buildBehaviorResolver } from "./behavior-resolver.js";
+export type { BuildBehaviorResolverOptions } from "./behavior-resolver.js";
+
+// Canonical upgrade-policy helper for /versioning/upgrade endpoints
+export { validateVersionUpgrade } from "./version-upgrade.js";
+export type {
+  ValidateVersionUpgradeArgs,
+  ValidateVersionUpgradeResult,
+  CompareFn,
+} from "./version-upgrade.js";
+
 // T-1300 and T-1301: AST analysis and custom module loading
 // These features are N/A in the TypeScript version. In the Python Tsadwyn library,
 // T-1300 (AST analysis) uses Python's ast module to analyze and render versioned

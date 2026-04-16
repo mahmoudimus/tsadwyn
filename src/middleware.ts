@@ -96,10 +96,15 @@ export function versionPickingMiddleware(
 
     // Apply default value if no version found
     if (version === undefined && opts.apiVersionDefaultValue !== null) {
-      if (typeof opts.apiVersionDefaultValue === "function") {
-        version = await opts.apiVersionDefaultValue(req);
-      } else if (typeof opts.apiVersionDefaultValue === "string") {
-        version = opts.apiVersionDefaultValue;
+      try {
+        if (typeof opts.apiVersionDefaultValue === "function") {
+          version = await opts.apiVersionDefaultValue(req);
+        } else if (typeof opts.apiVersionDefaultValue === "string") {
+          version = opts.apiVersionDefaultValue;
+        }
+      } catch (err) {
+        next(err);
+        return;
       }
     }
 
