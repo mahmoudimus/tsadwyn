@@ -47,7 +47,11 @@ function buildStore() {
 
 function buildApp(
   store: ReturnType<typeof buildStore>,
-  opts: { allowDowngrade?: boolean; allowNoChange?: boolean } = {},
+  opts: {
+    allowDowngrade?: boolean;
+    allowNoChange?: boolean;
+    fallback?: string;
+  } = {},
 ) {
   const versions = new VersionBundle(
     new Version("2025-06-01"),
@@ -64,6 +68,7 @@ function buildApp(
     supportedVersions: versions.versionValues,
     allowDowngrade: opts.allowDowngrade ?? false,
     allowNoChange: opts.allowNoChange ?? false,
+    fallback: opts.fallback,
   });
 
   const app = new Tsadwyn({ versions });
@@ -101,9 +106,9 @@ describe("createVersioningRoutes — RESTful /versioning resource", () => {
     expect(res.status).toBe(401);
   });
 
-  it("GET /versioning returns the fallback version when no pin is stored", async () => {
+  it("GET /versioning returns null for unpinned clients when no fallback is configured", async () => {
     const store = buildStore();
-    const app = buildApp(store);
+    const app = buildApp(store);  // no fallback option
 
     const res = await request(app.expressApp)
       .get("/versioning")
@@ -111,8 +116,8 @@ describe("createVersioningRoutes — RESTful /versioning resource", () => {
       .set("x-api-version", "2025-06-01");
 
     expect(res.status).toBe(200);
-    // When no pin is stored, `version` is null (client is unpinned;
-    // server falls back to its own default).
+    // No fallback → version is null (the client is truly unpinned from
+    // tsadwyn's perspective; consumer may handle this out-of-band).
     expect(res.body.version).toBeNull();
   });
 
@@ -249,6 +254,104 @@ describe("createVersioningRoutes — RESTful /versioning resource", () => {
       .set("x-api-version", "2025-06-01")
       .send({ to: "2025-01-01" });
     expect(missingFrom.status).toBe(422);
+  });
+
+  describe("fallback — effective version for unpinned clients", () => {
+    it("GET /versioning returns the fallback value when no pin is stored", async () => {
+      const store = buildStore();
+      const app = buildApp(store, { fallback: "2024-01-01" });
+
+      const res = await request(app.expressApp)
+        .get("/versioning")
+        .set("x-account-id", "acct_never_upgraded")
+        .set("x-api-version", "2025-06-01");
+
+      expect(res.status).toBe(200);
+      // Reports what tsadwyn would actually use at dispatch time.
+      expect(res.body.version).toBe("2024-01-01");
+    });
+
+    it("POST /versioning accepts from: fallback as 'unpinned starting state'", async () => {
+      const store = buildStore();  // acct_1 is unpinned
+      const app = buildApp(store, { fallback: "2024-01-01" });
+
+      const res = await request(app.expressApp)
+        .post("/versioning")
+        .set("x-account-id", "acct_1")
+        .set("x-api-version", "2025-06-01")
+        .send({ from: "2024-01-01", to: "2025-01-01" });  // from == fallback
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        previous_version: null,
+        current_version: "2025-01-01",
+      });
+      expect(store.load("acct_1")).toBe("2025-01-01");
+    });
+
+    it("POST /versioning still accepts from: null alongside fallback (either describes unpinned)", async () => {
+      const store = buildStore();
+      const app = buildApp(store, { fallback: "2024-01-01" });
+
+      const res = await request(app.expressApp)
+        .post("/versioning")
+        .set("x-account-id", "acct_1")
+        .set("x-api-version", "2025-06-01")
+        .send({ from: null, to: "2025-01-01" });
+
+      expect(res.status).toBe(200);
+      expect(res.body).toEqual({
+        previous_version: null,
+        current_version: "2025-01-01",
+      });
+    });
+
+    it("POST /versioning with from: <other> → 409 against effective version (not null)", async () => {
+      const store = buildStore();
+      const app = buildApp(store, { fallback: "2024-01-01" });
+
+      const res = await request(app.expressApp)
+        .post("/versioning")
+        .set("x-account-id", "acct_1")
+        .set("x-api-version", "2025-06-01")
+        .send({ from: "2025-01-01", to: "2025-06-01" });  // wrong from
+
+      expect(res.status).toBe(409);
+      expect(res.body).toMatchObject({
+        error: "version_mismatch",
+        expected: "2025-01-01",
+        actual: "2024-01-01",  // effective, not null
+      });
+    });
+
+    it("first-upgrade policy: downgrade from fallback is blocked by default", async () => {
+      const store = buildStore();
+      const app = buildApp(store, { fallback: "2025-01-01" });
+
+      // Client tries to "upgrade" to a version older than the fallback.
+      const res = await request(app.expressApp)
+        .post("/versioning")
+        .set("x-account-id", "acct_1")
+        .set("x-api-version", "2025-06-01")
+        .send({ from: "2025-01-01", to: "2024-01-01" });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({ error: "downgrade-blocked" });
+    });
+
+    it("first-upgrade policy: no-change vs fallback is blocked by default", async () => {
+      const store = buildStore();
+      const app = buildApp(store, { fallback: "2024-01-01" });
+
+      const res = await request(app.expressApp)
+        .post("/versioning")
+        .set("x-account-id", "acct_1")
+        .set("x-api-version", "2025-06-01")
+        .send({ from: "2024-01-01", to: "2024-01-01" });
+
+      expect(res.status).toBe(400);
+      expect(res.body).toMatchObject({ error: "no-change" });
+    });
   });
 
   it("POST /versioning first-upgrade flow: from: null for unpinned clients", async () => {

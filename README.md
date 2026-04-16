@@ -238,15 +238,24 @@ Two design decisions worth calling out:
 
 The client re-reads and decides whether to retry.
 
-**2. First-upgrade convention.** A client who has never explicitly pinned a version reads `GET /versioning` → `{version: null, …}`. Their first upgrade passes `from: null` to install the initial pin:
+**2. First-upgrade convention.** A client who has never explicitly pinned reads `GET /versioning` and sees either:
+
+- **`{version: null, ...}`** — when no `fallback` option is configured. The client is truly unpinned from tsadwyn's perspective.
+- **`{version: <fallback>, ...}`** — when `fallback` is set (pass the same value you pass to `perClientDefaultVersion.fallback`). `GET /versioning` then reports the *effective* version tsadwyn would use at dispatch, so the resource shape and the runtime behavior stay in sync.
+
+Either way, the first upgrade can pass either `from: null` OR `from: <fallback>` — they describe the same unpinned state:
 
 ```http
 POST /versioning
-{ "from": null, "to": "2024-01-01" }
+{ "from": null, "to": "2024-06-01" }    # works when unpinned, no matter whether fallback is set
+POST /versioning
+{ "from": "2024-01-15", "to": "2024-06-01" }  # equivalent when fallback: "2024-01-15"
 
 HTTP/1.1 200 OK
-{ "previous_version": null, "current_version": "2024-01-01" }
+{ "previous_version": null, "current_version": "2024-06-01" }
 ```
+
+When `fallback` is set, the first-upgrade also runs through the standard downgrade / no-change policy: `POST {from: "2024-01-15", to: "2024-01-15"}` against `fallback: "2024-01-15"` is 400 `no-change`, not 200, which matches what a second upgrade would do from that same starting point.
 
 **Admin force-pin** (bypass the forward-only policy) is supported via `allowDowngrade: true`. The test suite covers this case. Typically the admin endpoint is a separate route that mounts its own version of `createVersioningRoutes({...allowDowngrade: true, identify: adminIdentify})` with a different auth scope.
 

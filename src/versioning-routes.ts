@@ -51,6 +51,19 @@ export interface CreateVersioningRoutesOptions {
   allowNoChange?: boolean;
   /** Version comparison strategy. Default 'iso-date'. */
   compare?: "iso-date" | "semver" | CompareFn;
+  /**
+   * Effective version for unpinned clients. When supplied, `GET /versioning`
+   * returns `{version: fallback}` for clients whose `loadVersion` returns
+   * null, matching what `perClientDefaultVersion` (or any equivalent
+   * default-version resolver) would actually use at dispatch time.
+   *
+   * `POST /versioning` accepts either `from: null` OR `from: fallback` as
+   * the "unpinned" starting state — they describe the same situation.
+   *
+   * Pass the same value you pass to `perClientDefaultVersion.fallback` so
+   * the two helpers agree on what the client is effectively running.
+   */
+  fallback?: string;
 }
 
 const VersioningState = named(
@@ -86,14 +99,19 @@ export function createVersioningRoutes(
 
   // ── GET /versioning ────────────────────────────────────────────────────
   // Returns the authenticated client's current pin + the full supported set.
+  // When no pin is stored and `fallback` is configured, the effective
+  // version (what tsadwyn actually uses at dispatch) is reported instead
+  // of null — so clients can't get confused between "what I said" and
+  // "what the server will do".
   router.get(path, null, VersioningState, async (req: any) => {
     const clientId = await Promise.resolve(opts.identify(req));
     if (!clientId) {
       throw new HttpError(401, { error: "unauthorized" });
     }
-    const current = await Promise.resolve(opts.loadVersion(clientId));
+    const stored = await Promise.resolve(opts.loadVersion(clientId));
+    const effective = stored ?? opts.fallback ?? null;
     return {
-      version: current,
+      version: effective,
       supported: [...opts.supportedVersions],
       // supportedVersions is newest-first per tsadwyn convention, so [0] is head.
       latest: opts.supportedVersions[0],
@@ -101,8 +119,11 @@ export function createVersioningRoutes(
   });
 
   // ── POST /versioning ───────────────────────────────────────────────────
-  // Optimistic-concurrency-aware upgrade. `from` must match the stored pin,
-  // or the server 409s and the client must re-read + retry.
+  // Optimistic-concurrency-aware upgrade. `from` must match the client's
+  // effective current version (stored pin, or `fallback` if unpinned).
+  // Mismatch → 409 and the client must re-read + retry. When no pin is
+  // stored and a fallback is configured, the client may pass EITHER
+  // `from: null` OR `from: <fallback>` — both describe the same state.
   router.post(path, UpgradeRequest, UpgradeResponse, async (req: any) => {
     const clientId = await Promise.resolve(opts.identify(req));
     if (!clientId) {
@@ -110,32 +131,64 @@ export function createVersioningRoutes(
     }
 
     const { from, to } = req.body as { from: string | null; to: string };
-    const current = await Promise.resolve(opts.loadVersion(clientId));
+    const stored = await Promise.resolve(opts.loadVersion(clientId));
+    const effective = stored ?? opts.fallback ?? null;
 
-    if (from !== current) {
+    // Acceptable `from` values match the effective current. When the client
+    // is unpinned and a fallback is configured, `null` AND `fallback` both
+    // describe the unpinned state — accept either.
+    const fromMatches =
+      from === effective ||
+      (stored === null && (from === null || from === opts.fallback));
+
+    if (!fromMatches) {
       throw new HttpError(409, {
         error: "version_mismatch",
         expected: from,
-        actual: current,
+        actual: effective,
       });
     }
 
-    // First-upgrade flow: client has never pinned (from === current === null).
-    // Install the initial pin, subject only to the supported-list check.
-    if (from === null) {
+    // First-upgrade flow: the client is unpinned (no stored value). We
+    // install their first explicit pin, subject to the supported-list
+    // check. Downgrade / no-change policy is evaluated against the
+    // effective version when a fallback is configured, otherwise skipped
+    // (null-from case) — either way matching the prior behavior.
+    if (stored === null) {
       if (!opts.supportedVersions.includes(to)) {
         throw new HttpError(400, {
           error: "unsupported",
           detail: `Target version "${to}" is not in the supported list.`,
         });
       }
+      // If a fallback is configured, evaluate policy vs effective version
+      // to prevent a "first upgrade" sneaking in a downgrade or no-change.
+      if (opts.fallback !== undefined) {
+        const decision = validateVersionUpgrade({
+          current: opts.fallback,
+          target: to,
+          supported: opts.supportedVersions,
+          allowDowngrade: opts.allowDowngrade,
+          allowNoChange: opts.allowNoChange,
+          compare: opts.compare,
+        });
+        if (!decision.ok) {
+          throw new HttpError(400, {
+            error: decision.reason,
+            detail: decision.detail,
+          });
+        }
+      }
       await Promise.resolve(opts.saveVersion(clientId, to));
-      return { previous_version: null, current_version: to };
+      return {
+        previous_version: stored,  // null — no prior explicit pin
+        current_version: to,
+      };
     }
 
     // Standard upgrade: both `from` and `to` are concrete versions.
     const decision = validateVersionUpgrade({
-      current: from,
+      current: stored,
       target: to,
       supported: opts.supportedVersions,
       allowDowngrade: opts.allowDowngrade,

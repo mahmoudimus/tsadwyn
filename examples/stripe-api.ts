@@ -511,6 +511,10 @@ const versioningRoutes = createVersioningRoutes({
     clientPins[accountId] = version;
   },
   supportedVersions: SUPPORTED_VERSIONS,
+  // Match perClientDefaultVersion's fallback below so GET /versioning
+  // reports what tsadwyn would actually use at dispatch: the initial
+  // version (2024-01-15) when no pin is stored.
+  fallback: "2024-01-15",
   // allowDowngrade: false,   // default
   // allowNoChange:  false,   // default
 });
