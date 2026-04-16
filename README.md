@@ -149,9 +149,17 @@ const app = new Tsadwyn({
 
 An explicit `x-api-version` header always wins over the resolver — useful for staging, per-request overrides, and admin tooling.
 
-### Upgrade semantics — the `/versioning` resource
+### Upgrade semantics — the `/versioning` resource (optional)
 
-tsadwyn ships a pre-wired RESTful `/versioning` resource so consumers don't have to hand-roll the upgrade endpoint. Consumer supplies identify / load / save callbacks; tsadwyn does the rest (policy check via `validateVersionUpgrade`, optimistic concurrency, error envelopes).
+tsadwyn ships a pre-wired RESTful `/versioning` resource so consumers don't have to hand-roll the upgrade endpoint. It's **fully opt-in** — you don't have to mount it at all, and you don't have to use it if you do. If your API doesn't expose self-service upgrades (clients pin via an admin ticket, their signup config, etc.) just skip this section.
+
+**tsadwyn owns no persistence.** Pinned versions live in whatever storage the consumer already has — an `api_version` column on the accounts table, a Redis key, an entry in a config service. The helper is a three-callback adapter:
+
+- `identify(req)` — consumer's auth layer extracts the client id from the request
+- `loadVersion(clientId)` — consumer reads their storage
+- `saveVersion(clientId, version)` — consumer writes their storage
+
+tsadwyn never sees the DB, doesn't ship a migration, doesn't assume a column name, and doesn't run SQL. If the consumer swaps Postgres for DynamoDB, only their callbacks change.
 
 ```ts
 import { Tsadwyn, VersionBundle, createVersioningRoutes } from 'tsadwyn';
@@ -172,6 +180,46 @@ const versioningRoutes = createVersioningRoutes({
 const app = new Tsadwyn({ versions, preVersionPick: authMiddleware });
 app.generateAndIncludeVersionedRouters(versioningRoutes, myDomainRoutes);
 ```
+
+**Different persistence backends, same callbacks.** The helper doesn't care what's on the other side of `loadVersion` / `saveVersion`. Three common shapes:
+
+```ts
+// Postgres via a repo class — the shape we recommend when a dedicated
+// api_version column fits on your existing accounts table.
+createVersioningRoutes({
+  identify:    req => req.user?.accountId ?? null,
+  loadVersion: accountId => db.selectFrom('accounts')
+                              .select('api_version')
+                              .where('id', '=', accountId)
+                              .executeTakeFirst().then(r => r?.api_version ?? null),
+  saveVersion: (accountId, v) => db.updateTable('accounts')
+                                   .set({ api_version: v })
+                                   .where('id', '=', accountId)
+                                   .execute().then(() => {}),
+  supportedVersions: versions.versionValues,
+});
+
+// Redis — when the pin is a cache-layer concern or you're doing a
+// side-car deployment before touching the primary DB schema.
+createVersioningRoutes({
+  identify:    req => req.user?.accountId ?? null,
+  loadVersion: accountId => redis.get(`account:${accountId}:api_version`),
+  saveVersion: (accountId, v) => redis.set(`account:${accountId}:api_version`, v).then(() => {}),
+  supportedVersions: versions.versionValues,
+});
+
+// Remote config service — if your pins live in a separate account-service
+// that your API calls out to. (Great fit for the warn-once logger pattern
+// from perClientDefaultVersion too.)
+createVersioningRoutes({
+  identify:    req => req.user?.accountId ?? null,
+  loadVersion: accountId => accountService.getApiVersion({ accountId }),
+  saveVersion: (accountId, v) => accountService.setApiVersion({ accountId, version: v }),
+  supportedVersions: versions.versionValues,
+});
+```
+
+`async` / `Promise`-returning callbacks are awaited; sync-returning callbacks are treated as resolved. Throwing from a callback surfaces as 500 via the standard error pipeline (or as a structured `HttpError` if your `errorMapper` maps the underlying exception).
 
 The resource:
 
