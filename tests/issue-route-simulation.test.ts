@@ -305,6 +305,102 @@ describe("Issue: simulateRoute() — migration visibility", () => {
     });
   });
 
+  it("surfaces PATH-based request AND response migrations in the chain summaries", () => {
+    class PathBasedBothDirections extends VersionChange {
+      description = "path-based request + response migrations on POST /api/charges";
+      instructions = [];
+
+      req1 = convertRequestToNextVersionFor("/api/charges", ["POST"])(
+        (_req: RequestInfo) => {},
+      );
+
+      res1 = convertResponseToPreviousVersionFor("/api/charges", ["POST"])(
+        (_res: ResponseInfo) => {},
+      );
+    }
+
+    const router = new VersionedRouter({ prefix: "/api" });
+    router.post(
+      "/charges",
+      ChargeReq,
+      ChargeResp,
+      async () => ({ id: "c1", amount: 100 }),
+    );
+
+    const app = new Tsadwyn({
+      versions: new VersionBundle(
+        new Version("2025-06-01", PathBasedBothDirections),
+        new Version("2024-01-01"),
+      ),
+    });
+    app.generateAndIncludeVersionedRouters(router);
+
+    const result = simulateRoute(app, {
+      method: "POST",
+      path: "/api/charges",
+      version: "2024-01-01",
+    });
+
+    // Path-based request migration surfaces (schemaName: null signals path-based)
+    const pathBasedReq = result.requestMigrations.filter(
+      (m: any) => m.schemaName === null,
+    );
+    expect(pathBasedReq.length).toBeGreaterThan(0);
+    expect(pathBasedReq[0].path).toBe("/api/charges");
+
+    // Path-based response migration surfaces
+    const pathBasedRes = result.responseMigrations.filter(
+      (m: any) => m.schemaName === null,
+    );
+    expect(pathBasedRes.length).toBeGreaterThan(0);
+    expect(pathBasedRes[0].path).toBe("/api/charges");
+  });
+
+  it("body preview runs PATH-based request migrations too (not only schema-based)", () => {
+    class PathBasedBodyRewriter extends VersionChange {
+      description =
+        "path-based request migration that injects a default field for legacy clients";
+      instructions = [];
+
+      r1 = convertRequestToNextVersionFor("/api/charges", ["POST"])(
+        (req: RequestInfo) => {
+          if ((req.body as any) && typeof req.body === "object") {
+            (req.body as any).currency = (req.body as any).currency ?? "USD";
+          }
+        },
+      );
+    }
+
+    const router = new VersionedRouter({ prefix: "/api" });
+    router.post(
+      "/charges",
+      ChargeReq,
+      ChargeResp,
+      async () => ({ id: "c1", amount: 100 }),
+    );
+
+    const app = new Tsadwyn({
+      versions: new VersionBundle(
+        new Version("2025-06-01", PathBasedBodyRewriter),
+        new Version("2024-01-01"),
+      ),
+    });
+    app.generateAndIncludeVersionedRouters(router);
+
+    const result = simulateRoute(app, {
+      method: "POST",
+      path: "/api/charges",
+      version: "2024-01-01",
+      body: { amount: 100 },  // legacy client didn't send currency
+    });
+
+    // The path-based migration populated .currency even though we didn't send it.
+    expect(result.upMigratedBody).toMatchObject({
+      amount: 100,
+      currency: "USD",
+    });
+  });
+
   it("both migration arrays are empty when client pin == head", () => {
     class RenameAmount extends VersionChange {
       description = "rename amount at 2025-06-01";

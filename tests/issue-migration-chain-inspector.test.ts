@@ -302,6 +302,88 @@ describe("Issue: inspectMigrationChain()", () => {
     ).toThrow();
   });
 
+  it("returns path-based REQUEST migrations in client → head order when direction='request' + path is supplied", () => {
+    class PathBasedRequestMig extends VersionChange {
+      description = "path-based request migration on POST /orders at 2025-01-01";
+      instructions = [];
+
+      r1 = convertRequestToNextVersionFor("/orders", ["POST"])(
+        (_req: RequestInfo) => {},
+      );
+    }
+
+    const router = new VersionedRouter();
+    router.post("/orders", Order, Order, async () => ({
+      id: "o1",
+      amount: 100,
+      currency: "USD",
+    }));
+
+    const app = new Tsadwyn({
+      versions: new VersionBundle(
+        new Version("2025-01-01", PathBasedRequestMig),
+        new Version("2024-01-01"),
+      ),
+    });
+    app.generateAndIncludeVersionedRouters(router);
+
+    const chain = inspectMigrationChain(app, {
+      schemaName: "IssueMigChain_Order",
+      clientVersion: "2024-01-01",
+      direction: "request",
+      path: "/orders",
+      method: "POST",
+    });
+
+    const pathBased = chain.filter((e: any) => e.kind === "path-based");
+    expect(pathBased.length).toBe(1);
+    expect(pathBased[0]).toMatchObject({
+      version: "2025-01-01",
+      changeClassName: "PathBasedRequestMig",
+      kind: "path-based",
+      path: "/orders",
+    });
+    expect(pathBased[0].methods).toContain("POST");
+  });
+
+  it("path-based REQUEST migration method filter excludes non-matching methods", () => {
+    class OnlyPostMig extends VersionChange {
+      description = "path-based request migration on POST only";
+      instructions = [];
+
+      r1 = convertRequestToNextVersionFor("/orders", ["POST"])(
+        (_req: RequestInfo) => {},
+      );
+    }
+
+    const router = new VersionedRouter();
+    router.post("/orders", Order, Order, async () => ({
+      id: "o1",
+      amount: 100,
+      currency: "USD",
+    }));
+
+    const app = new Tsadwyn({
+      versions: new VersionBundle(
+        new Version("2025-01-01", OnlyPostMig),
+        new Version("2024-01-01"),
+      ),
+    });
+    app.generateAndIncludeVersionedRouters(router);
+
+    // Filter by GET — the POST-only path-based migration should NOT appear.
+    const chain = inspectMigrationChain(app, {
+      schemaName: "IssueMigChain_Order",
+      clientVersion: "2024-01-01",
+      direction: "request",
+      path: "/orders",
+      method: "GET",
+    });
+
+    const pathBased = chain.filter((e: any) => e.kind === "path-based");
+    expect(pathBased.length).toBe(0);
+  });
+
   it("entries include changeClassName, kind, and order for rendering", () => {
     class Mig extends VersionChange {
       description = "some migration";
