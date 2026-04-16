@@ -26,6 +26,9 @@ import { resolve, join, dirname } from "node:path";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 
 import { isExceptionMapFn, type ExceptionMapEntry } from "./exception-map.js";
+import { dumpRouteTable, type RouteTableEntry } from "./route-table.js";
+import { inspectMigrationChain, type MigrationChainEntry } from "./migration-chain.js";
+import { simulateRoute, type SimulationResult } from "./route-simulation.js";
 
 /**
  * The version string reported by `tsadwyn --version` / `tsadwyn -V`.
@@ -810,6 +813,366 @@ function emitResult(cmd: Command, result: CommandResult, errorCode: string): voi
 }
 
 // ─────────────────────────────────────────────────────────────────────────
+// `routes` — enumerate the registered route table per version
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface RoutesOptions {
+  app: string;
+  version?: string;
+  method?: string;
+  pathMatches?: string;
+  includePrivate?: boolean;
+  format?: "table" | "json" | "markdown";
+}
+
+function renderRouteTable(
+  entries: ReadonlyArray<RouteTableEntry>,
+  format: "table" | "json" | "markdown",
+): string {
+  if (format === "json") return JSON.stringify(entries, null, 2);
+
+  const rows = entries.map((e) => ({
+    version: e.version,
+    method: e.method,
+    path: e.path,
+    handler: e.handlerName ?? "<anonymous>",
+    status: String(e.statusCode),
+    response: e.responseSchemaName ?? "-",
+  }));
+  const headers = ["Version", "Method", "Path", "Handler", "Status", "Response"];
+
+  if (format === "markdown") {
+    const lines: string[] = [];
+    lines.push(`| ${headers.join(" | ")} |`);
+    lines.push(`| ${headers.map(() => "---").join(" | ")} |`);
+    for (const r of rows) {
+      lines.push(
+        `| ${r.version} | ${r.method} | ${r.path} | ${r.handler} | ${r.status} | ${r.response} |`,
+      );
+    }
+    return lines.join("\n");
+  }
+
+  const cols = [
+    { key: "version", label: headers[0] },
+    { key: "method", label: headers[1] },
+    { key: "path", label: headers[2] },
+    { key: "handler", label: headers[3] },
+    { key: "status", label: headers[4] },
+    { key: "response", label: headers[5] },
+  ] as const;
+  const widths = cols.map((c) =>
+    Math.max(c.label.length, ...rows.map((r) => (r as any)[c.key].length)),
+  );
+  const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - s.length));
+  const sep = "+-" + widths.map((w) => "-".repeat(w)).join("-+-") + "-+";
+  const render = (values: string[]) =>
+    "| " + values.map((v, i) => pad(v, widths[i])).join(" | ") + " |";
+
+  const lines: string[] = [];
+  lines.push(`Routes (${entries.length})`);
+  lines.push("");
+  lines.push(sep);
+  lines.push(render(cols.map((c) => c.label)));
+  lines.push(sep);
+  for (const r of rows) {
+    lines.push(render(cols.map((c) => (r as any)[c.key])));
+  }
+  lines.push(sep);
+  return lines.join("\n");
+}
+
+export async function runRoutes(
+  options: RoutesOptions,
+): Promise<StreamedCommandResult> {
+  const format = options.format ?? "table";
+  try {
+    const mod = await loadAppModule(options.app);
+    const app = resolveAppInstance(mod);
+    if (!app) {
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          "Error: Could not find a Tsadwyn app export. " +
+          "The module should have a default export or a named 'app' export.",
+      };
+    }
+    // Trigger initialization if needed so _versionedRoutes is populated.
+    const routers = mod.routers ?? mod.versionedRouters;
+    if (routers) {
+      const routerArr = Array.isArray(routers) ? routers : [routers];
+      app.generateAndIncludeVersionedRouters(...routerArr);
+    } else if (app._pendingRouters) {
+      app._performInitialization?.();
+    }
+
+    const entries = dumpRouteTable(app, {
+      version: options.version,
+      method: options.method,
+      pathMatches: options.pathMatches,
+      includePrivate: options.includePrivate ?? false,
+    });
+
+    return {
+      exitCode: 0,
+      stdout: renderRouteTable(entries, format),
+      stderr: "",
+    };
+  } catch (err) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: `Error in routes command: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// `migrations` — inspect the migration chain for a schema + client version
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface MigrationsOptions {
+  app: string;
+  schema: string;
+  version: string;
+  direction?: "request" | "response";
+  path?: string;
+  method?: string;
+  includeErrorMigrations?: boolean;
+  format?: "pipeline" | "json";
+}
+
+function renderMigrationChain(
+  entries: ReadonlyArray<MigrationChainEntry>,
+  direction: "request" | "response",
+  clientVersion: string,
+  schemaName: string,
+  format: "pipeline" | "json",
+): string {
+  if (format === "json") return JSON.stringify(entries, null, 2);
+
+  const lines: string[] = [];
+  lines.push(`Schema: ${schemaName}`);
+  lines.push(`Direction: ${direction} (${direction === "response" ? "head → client" : "client → head"})`);
+  lines.push(`Client version: ${clientVersion}`);
+  lines.push("");
+  if (entries.length === 0) {
+    lines.push("No migrations in chain.");
+    return lines.join("\n");
+  }
+  for (const entry of entries) {
+    lines.push(
+      `  ↓ ${entry.version} — ${entry.changeClassName}.${entry.functionName} (${entry.kind}${
+        entry.migrateHttpErrors ? ", migrateHttpErrors" : ""
+      })`,
+    );
+  }
+  lines.push("");
+  lines.push(`${entries.length} migration(s) in chain.`);
+  return lines.join("\n");
+}
+
+export async function runMigrations(
+  options: MigrationsOptions,
+): Promise<StreamedCommandResult> {
+  const format = options.format ?? "pipeline";
+  const direction = options.direction ?? "response";
+  try {
+    const mod = await loadAppModule(options.app);
+    const app = resolveAppInstance(mod);
+    if (!app) {
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          "Error: Could not find a Tsadwyn app export. " +
+          "The module should have a default export or a named 'app' export.",
+      };
+    }
+    const routers = mod.routers ?? mod.versionedRouters;
+    if (routers) {
+      const routerArr = Array.isArray(routers) ? routers : [routers];
+      app.generateAndIncludeVersionedRouters(...routerArr);
+    } else if (app._pendingRouters) {
+      app._performInitialization?.();
+    }
+
+    const entries = inspectMigrationChain(app, {
+      schemaName: options.schema,
+      clientVersion: options.version,
+      direction,
+      path: options.path,
+      method: options.method,
+      includeErrorMigrations: options.includeErrorMigrations,
+    });
+
+    return {
+      exitCode: 0,
+      stdout: renderMigrationChain(
+        entries,
+        direction,
+        options.version,
+        options.schema,
+        format,
+      ),
+      stderr: "",
+    };
+  } catch (err) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: `Error in migrations command: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// `simulate` — simulate a request against the route table
+// ─────────────────────────────────────────────────────────────────────────
+
+export interface SimulateOptions {
+  app: string;
+  method: string;
+  path: string;
+  version?: string;
+  body?: string;
+  format?: "table" | "json";
+}
+
+function renderSimulation(
+  result: SimulationResult,
+  format: "table" | "json",
+): string {
+  if (format === "json") return JSON.stringify(result, null, 2);
+
+  const lines: string[] = [];
+  lines.push(`Resolved version: ${result.resolvedVersion}`);
+  lines.push("");
+  if (result.matchedRoute) {
+    lines.push(
+      `Matched route: [${result.matchedRoute.method}] ${result.matchedRoute.path}`,
+    );
+    if (Object.keys(result.matchedRoute.params).length > 0) {
+      lines.push(`  params: ${JSON.stringify(result.matchedRoute.params)}`);
+    }
+    lines.push(`  handler: ${result.matchedRoute.handler}`);
+    if (result.matchedRoute.schemaName) {
+      lines.push(`  response schema: ${result.matchedRoute.schemaName}`);
+    }
+  } else {
+    lines.push("Matched route: (none — request would fall through)");
+  }
+  lines.push("");
+  lines.push("Candidates:");
+  for (const c of result.candidates) {
+    const mark = c.matched ? "✓" : "✗";
+    lines.push(`  ${mark} [${c.method}] ${c.path}  — ${c.reason}`);
+  }
+  if (result.fallthrough) {
+    lines.push("");
+    lines.push("Fallthrough:");
+    lines.push(`  reason: ${result.fallthrough.reason}`);
+    if (result.fallthrough.availableAtOtherVersions.length > 0) {
+      lines.push(
+        `  available at other versions: ${result.fallthrough.availableAtOtherVersions.join(", ")}`,
+      );
+    }
+  }
+  if (result.requestMigrations.length > 0) {
+    lines.push("");
+    lines.push("Request migrations:");
+    for (const m of result.requestMigrations) {
+      lines.push(`  ${m.fromVersion} → ${m.toVersion}  (${m.schemaName ?? m.path})`);
+    }
+  }
+  if (result.responseMigrations.length > 0) {
+    lines.push("");
+    lines.push("Response migrations:");
+    for (const m of result.responseMigrations) {
+      lines.push(`  ${m.fromVersion} → ${m.toVersion}  (${m.schemaName ?? m.path})`);
+    }
+  }
+  if (result.upMigratedBody !== undefined) {
+    lines.push("");
+    lines.push(`Up-migrated body: ${JSON.stringify(result.upMigratedBody)}`);
+  }
+  return lines.join("\n");
+}
+
+export async function runSimulate(
+  options: SimulateOptions,
+): Promise<StreamedCommandResult> {
+  const format = options.format ?? "table";
+  if (!options.method) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: "Error: --method is required for tsadwyn simulate.",
+    };
+  }
+  if (!options.path) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: "Error: --path is required for tsadwyn simulate.",
+    };
+  }
+  try {
+    const mod = await loadAppModule(options.app);
+    const app = resolveAppInstance(mod);
+    if (!app) {
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          "Error: Could not find a Tsadwyn app export. " +
+          "The module should have a default export or a named 'app' export.",
+      };
+    }
+    const routers = mod.routers ?? mod.versionedRouters;
+    if (routers) {
+      const routerArr = Array.isArray(routers) ? routers : [routers];
+      app.generateAndIncludeVersionedRouters(...routerArr);
+    } else if (app._pendingRouters) {
+      app._performInitialization?.();
+    }
+
+    let parsedBody: unknown = undefined;
+    if (options.body) {
+      try {
+        parsedBody = JSON.parse(options.body);
+      } catch {
+        return {
+          exitCode: 1,
+          stdout: "",
+          stderr: `Error: --body is not valid JSON: ${options.body}`,
+        };
+      }
+    }
+
+    const result = simulateRoute(app, {
+      method: options.method,
+      path: options.path,
+      version: options.version,
+      body: parsedBody,
+    });
+
+    return {
+      exitCode: 0,
+      stdout: renderSimulation(result, format),
+      stderr: "",
+    };
+  } catch (err) {
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: `Error in simulate command: ${err instanceof Error ? err.message : String(err)}`,
+    };
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // `exceptions` — introspect the configured errorMapper's exception table
 // ─────────────────────────────────────────────────────────────────────────
 
@@ -1016,6 +1379,87 @@ export function createProgram(): Command {
           result.exitCode,
           "tsadwyn.exceptionsFailed",
           result.stderr || "exceptions command failed",
+        );
+      }
+    });
+
+  cmd
+    .command("routes")
+    .description("Enumerate the registered route table per version.")
+    .requiredOption("--app <path>", "Path to the module that exports the Tsadwyn app")
+    .option("--version <value>", "Filter to a single API version")
+    .option("--method <METHOD>", "Filter by HTTP method (case-insensitive)")
+    .option("--path-matches <pattern>", "Filter by path — regex source or substring")
+    .option("--include-private", "Include routes with includeInSchema: false")
+    .option("--format <format>", "Output format: table (default) | json | markdown", "table")
+    .action(async (options: RoutesOptions) => {
+      const result = await runRoutes(options);
+      if (result.stdout) process.stdout.write(result.stdout + "\n");
+      if (result.stderr) process.stderr.write(result.stderr + "\n");
+      if (result.exitCode !== 0) {
+        throw new CommanderError(
+          result.exitCode,
+          "tsadwyn.routesFailed",
+          result.stderr || "routes command failed",
+        );
+      }
+    });
+
+  cmd
+    .command("migrations")
+    .description(
+      "Inspect the request or response migration chain for a schema at a client version.",
+    )
+    .requiredOption("--app <path>", "Path to the module that exports the Tsadwyn app")
+    .requiredOption("--schema <name>", "Schema name (as set via .named())")
+    .requiredOption("--version <value>", "Client API version")
+    .option("--direction <dir>", "response (default) | request", "response")
+    .option("--path <path>", "Scope to a single path-based migration target")
+    .option("--method <method>", "Paired with --path")
+    .option(
+      "--no-error-migrations",
+      "Exclude migrations with migrateHttpErrors: true",
+    )
+    .option("--format <format>", "Output format: pipeline (default) | json", "pipeline")
+    .action(
+      async (options: MigrationsOptions & { errorMigrations?: boolean }) => {
+        const result = await runMigrations({
+          ...options,
+          includeErrorMigrations: options.errorMigrations !== false,
+        });
+        if (result.stdout) process.stdout.write(result.stdout + "\n");
+        if (result.stderr) process.stderr.write(result.stderr + "\n");
+        if (result.exitCode !== 0) {
+          throw new CommanderError(
+            result.exitCode,
+            "tsadwyn.migrationsFailed",
+            result.stderr || "migrations command failed",
+          );
+        }
+      },
+    );
+
+  cmd
+    .command("simulate")
+    .description(
+      "Simulate a request against the route table: matched route, candidates, " +
+        "migration chains, and up-migrated body preview.",
+    )
+    .requiredOption("--app <path>", "Path to the module that exports the Tsadwyn app")
+    .requiredOption("--method <METHOD>", "HTTP method of the simulated request")
+    .requiredOption("--path <path>", "Request path")
+    .option("--version <value>", "API version (explicit overrides headers/default)")
+    .option("--body <json>", "Request body as a JSON string")
+    .option("--format <format>", "Output format: table (default) | json", "table")
+    .action(async (options: SimulateOptions) => {
+      const result = await runSimulate(options);
+      if (result.stdout) process.stdout.write(result.stdout + "\n");
+      if (result.stderr) process.stderr.write(result.stderr + "\n");
+      if (result.exitCode !== 0) {
+        throw new CommanderError(
+          result.exitCode,
+          "tsadwyn.simulateFailed",
+          result.stderr || "simulate command failed",
         );
       }
     });

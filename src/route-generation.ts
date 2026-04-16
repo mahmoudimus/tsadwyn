@@ -18,6 +18,7 @@ import {
   AlterRequestByPathInstruction,
   AlterResponseByPathInstruction,
 } from "./structure/data.js";
+import { isRawResponse } from "./raw-response.js";
 import { ZodSchemaRegistry, generateVersionedSchemas } from "./schema-generation.js";
 import {
   TsadwynHeadRequestValidationError,
@@ -584,6 +585,59 @@ export function generateVersionedRouters(
           );
         }
       }
+    }
+  }
+
+  // Lint: response migrations (path- or schema-based) targeting a route
+  // whose responseSchema is a raw() marker. The response body is opaque
+  // bytes (Buffer / Readable) — transformer code that touches `res.body`
+  // as JSON is dead.
+  for (const version of versions.versions) {
+    for (const change of version.changes) {
+      for (const [path, instrs] of change._alterResponseByPathInstructions) {
+        const normalizedPath = path.replace(/\/+$/, "");
+        for (const instr of instrs) {
+          for (const method of instr.methods) {
+            const route = allRoutes.find(
+              (r) =>
+                r.path.replace(/\/+$/, "") === normalizedPath &&
+                r.method.toUpperCase() === method,
+            );
+            if (!route) continue;
+            if (isRawResponse(route.responseSchema)) {
+              // eslint-disable-next-line no-console
+              console.warn(
+                `tsadwyn: response migration "${instr.methodName}" targets ` +
+                  `${method} ${path} which is a raw()/binary route. ` +
+                  `Transformers on raw routes are dead code — the response ` +
+                  `body is opaque bytes (not JSON). Remove the migration or ` +
+                  `register a JSON responseSchema instead.`,
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Lint: statusCode: 204 + a non-null responseSchema. The in-memory
+  // migration pipeline runs correctly, but Node's HTTP server strips bodies
+  // on 204 responses at the wire level per RFC 9110 §15.3.5 (verified
+  // empirically against api.stripe.com: Stripe uses 200+body for DELETE,
+  // never 204+body). Warn loudly so consumers discover this during dev
+  // rather than wondering why their client sees empty bodies in prod.
+  for (const route of allRoutes) {
+    if (route.statusCode === 204 && route.responseSchema !== null) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `tsadwyn: route [${route.method}] ${route.path} has statusCode: 204 ` +
+          `AND a non-null responseSchema. Node's HTTP writer strips the body ` +
+          `on 204 responses at the wire level per RFC 9110 §15.3.5 — the body ` +
+          `won't arrive at the client. Use statusCode: 200 for delete-envelope ` +
+          `responses (Stripe pattern), or use the deletedResponseSchema() ` +
+          `helper which defaults to 200. If you intentionally want an empty ` +
+          `response, set responseSchema to null.`,
+      );
     }
   }
 
@@ -1186,6 +1240,13 @@ function createVersionedHandler(
         | undefined;
       const activeHandler = effectiveHandler || routeDef.handler;
       const result = await activeHandler(handlerReq);
+
+      // raw() marker: set the declared mime type so the non-JSON path
+      // below picks it up (sendNonJsonResponse preserves pre-set headers).
+      const rawMarker = isRawResponse(routeDef.responseSchema);
+      if (rawMarker && !res.getHeader("content-type")) {
+        res.setHeader("content-type", rawMarker.mimeType);
+      }
 
       // T-605: Handle non-JSON responses
       if (isNonJsonResponse(result)) {

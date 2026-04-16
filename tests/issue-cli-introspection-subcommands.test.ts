@@ -20,6 +20,7 @@ import { runRoutes, runMigrations, runSimulate } from "../src/cli.js";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES = resolve(__dirname, "fixtures");
 const CLI_APP = resolve(FIXTURES, "cli-happy-app.ts");
+const MIGRATIONS_APP = resolve(FIXTURES, "cli-migrations-app.ts");
 
 describe("CLI: tsadwyn routes", () => {
   it("runRoutes() with --format json returns a parseable route table", async () => {
@@ -76,8 +77,8 @@ describe("CLI: tsadwyn routes", () => {
 describe("CLI: tsadwyn migrations", () => {
   it("runMigrations() returns JSON list of migrations for a schema+version", async () => {
     const result = await runMigrations({
-      app: CLI_APP,
-      schema: "CliFixtureThing",
+      app: MIGRATIONS_APP,
+      schema: "CliMigrationsFixture_Thing",
       version: "2000-01-01",
       direction: "response",
       format: "json",
@@ -85,8 +86,6 @@ describe("CLI: tsadwyn migrations", () => {
     expect(result.exitCode).toBe(0);
     const parsed = JSON.parse(result.stdout);
     expect(Array.isArray(parsed)).toBe(true);
-    // The fixture has a RenameThingName change at 2001-01-01 — a 2000-01-01
-    // client sees it in the response chain.
     expect(parsed.length).toBeGreaterThan(0);
     expect(parsed[0]).toHaveProperty("version");
     expect(parsed[0]).toHaveProperty("changeClassName");
@@ -95,7 +94,7 @@ describe("CLI: tsadwyn migrations", () => {
 
   it("runMigrations() exits non-zero when schema is unknown", async () => {
     const result = await runMigrations({
-      app: CLI_APP,
+      app: MIGRATIONS_APP,
       schema: "NoSuchSchema",
       version: "2000-01-01",
       direction: "response",
@@ -107,8 +106,8 @@ describe("CLI: tsadwyn migrations", () => {
 
   it("runMigrations() direction defaults to 'response'", async () => {
     const withDefault = await runMigrations({
-      app: CLI_APP,
-      schema: "CliFixtureThing",
+      app: MIGRATIONS_APP,
+      schema: "CliMigrationsFixture_Thing",
       version: "2000-01-01",
       format: "json",
     });

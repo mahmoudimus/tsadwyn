@@ -133,6 +133,10 @@ export { migratePayloadToVersion } from "./migrate-payload.js";
 // Stripe-style deleted-resource response helper
 export { deletedResponseSchema } from "./delete-response.js";
 
+// Raw / binary / streaming response marker
+export { raw, isRawResponse, RAW_RESPONSE_MARKER } from "./raw-response.js";
+export type { RawResponseOptions, RawResponseMarker } from "./raw-response.js";
+
 // Debugging / introspection trio: routes / migrations / simulation
 export { dumpRouteTable } from "./route-table.js";
 export type {
