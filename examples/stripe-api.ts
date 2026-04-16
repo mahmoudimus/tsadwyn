@@ -320,9 +320,12 @@ class RemoveSourceAddPaymentIntent extends VersionChange {
     "back-reference, added payment_intents.automatic_payment_methods";
 
   instructions = [
-    // In v2024-06-01, charges still had `source` alongside payment_method —
-    // no schema-side declaration is needed because the request migration
-    // below maps `source` → `payment_method` before validation.
+    // At v2024-06-01, `payment_method` was optional and `source` existed as
+    // an optional alias — clients could send either. (Validation runs
+    // BEFORE request migrations, so the schema itself has to accept
+    // both shapes.)
+    schema(ChargeCreate).field("payment_method").had({ optional: true }),
+    schema(ChargeCreate).field("source").existedAs({ type: z.string().optional() }),
     schema(ChargeResource).field("payment_intent").didntExist,
     schema(PaymentIntentCreate).field("automatic_payment_methods").didntExist,
     schema(PaymentIntentResource).field("automatic_payment_methods").didntExist,
@@ -400,6 +403,13 @@ class RenameBalanceAndAddPaymentIntents extends VersionChange {
     endpoint("/v1/payment_intents", ["POST"]).didntExist,
     endpoint("/v1/payment_intents", ["GET"]).didntExist,
     endpoint("/v1/payment_intents/:piId", ["GET"]).didntExist,
+
+    // At v2024-01-15, `source` was the ONLY card token field and it was
+    // REQUIRED (payment_method didn't exist yet). Make source non-optional
+    // here (undoes the optional wrapper RemoveSourceAddPaymentIntent
+    // applied to produce the v2024-06-01 shape).
+    schema(ChargeCreate).field("payment_method").didntExist,
+    schema(ChargeCreate).field("source").had({ optional: false }),
   ];
 
   // Rename account_balance → balance in customer requests
