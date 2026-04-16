@@ -130,6 +130,9 @@ export type {
 // Outbound payload migration (webhooks, internal events)
 export { migratePayloadToVersion } from "./migrate-payload.js";
 
+// Stripe-style deleted-resource response helper
+export { deletedResponseSchema } from "./delete-response.js";
+
 // Debugging / introspection trio: routes / migrations / simulation
 export { dumpRouteTable } from "./route-table.js";
 export type {
