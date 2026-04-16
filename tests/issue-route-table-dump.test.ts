@@ -142,9 +142,11 @@ describe("Issue: dumpRouteTable()", () => {
       id: req.params.id,
       name: "alice",
     }));
-    // Legacy route registered but marked deleted in head; existed restores it at 2024-01-01
+    // Legacy route registered but marked deleted in head; existed restores it at 2024-01-01.
+    // The route is stored at its prefixed path (/api/legacy-only), so that's
+    // the path passed to onlyExistsInOlderVersions.
     router.get("/legacy-only", null, UserResp, async () => ({ id: "l", name: "legacy" }));
-    router.onlyExistsInOlderVersions("/legacy-only", ["GET"]);
+    router.onlyExistsInOlderVersions("/api/legacy-only", ["GET"]);
 
     const app = new Tsadwyn({
       versions: new VersionBundle(

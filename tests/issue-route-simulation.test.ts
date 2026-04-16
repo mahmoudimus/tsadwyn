@@ -25,6 +25,7 @@ import {
   RequestInfo,
   convertRequestToNextVersionFor,
   convertResponseToPreviousVersionFor,
+  endpoint,
 } from "../src/index.js";
 
 // GAP: not exported
@@ -398,43 +399,36 @@ describe("Issue: simulateRoute() — body preview", () => {
 
 describe("Issue: simulateRoute() — fallthrough diagnostics", () => {
   it("lists other versions at which the path DOES exist when fallthrough happens at the target version", () => {
-    // Endpoint lifecycle: /api/legacy exists at 2024-01-01 but didn't at head.
+    // Endpoint lifecycle: /api/legacy exists at 2024-01-01 but is removed at head.
     const router = new VersionedRouter({ prefix: "/api" });
+    router.get("/users/:id", null, UserResp, async (req: any) => ({
+      id: req.params.id,
+      name: "alice",
+    }));
     router.get(
       "/legacy",
       null,
       UserResp,
       async () => ({ id: "l", name: "legacy" }),
     );
-    router.onlyExistsInOlderVersions("/legacy", ["GET"]);
+    // onlyExistsInOlderVersions needs the stored (prefixed) path.
+    router.onlyExistsInOlderVersions("/api/legacy", ["GET"]);
 
     class RestoreLegacy extends VersionChange {
-      description = "legacy clients had GET /legacy";
-      instructions = [];
-    }
-
-    // Give RestoreLegacy the `existed` instruction via endpoint().existed
-    // (using a separate change class so we don't modify RestoreLegacy inline)
-    class RestoreLegacy2 extends VersionChange {
-      description = "legacy clients had GET /legacy (restored)";
-      instructions = [
-        // eslint-disable-next-line @typescript-eslint/no-require-imports
-        (require("../src/index.js") as typeof import("../src/index.js")).endpoint(
-          "/api/legacy",
-          ["GET"],
-        ).existed,
-      ];
+      description = "legacy clients had GET /api/legacy";
+      instructions = [endpoint("/api/legacy", ["GET"]).existed];
     }
 
     const app = new Tsadwyn({
       versions: new VersionBundle(
-        new Version("2025-06-01", RestoreLegacy2),
+        new Version("2025-06-01", RestoreLegacy),
         new Version("2024-01-01"),
       ),
     });
     app.generateAndIncludeVersionedRouters(router);
 
-    // At HEAD, /api/legacy doesn't exist
+    // At HEAD, /api/legacy does NOT exist — expect fallthrough with the
+    // other version where it DID exist listed.
     const result = simulateRoute(app, {
       method: "GET",
       path: "/api/legacy",
@@ -442,6 +436,7 @@ describe("Issue: simulateRoute() — fallthrough diagnostics", () => {
     });
 
     expect(result.matchedRoute).toBeNull();
-    expect(result.fallthrough.availableAtOtherVersions).toEqual(["2024-01-01"]);
+    expect(result.fallthrough).not.toBeNull();
+    expect(result.fallthrough!.availableAtOtherVersions).toEqual(["2024-01-01"]);
   });
 });
