@@ -156,6 +156,21 @@ export interface TsadwynOptions {
    * Default: false
    */
   separateInputOutputSchemas?: boolean;
+
+  /**
+   * Pure function invoked inside each versioned handler's catch block BEFORE
+   * tsadwyn's HTTP-likeness check. Lets consumers translate domain exceptions
+   * (which don't carry HTTP semantics) into `HttpError` so they flow through
+   * the response-migration pipeline.
+   *
+   * Return `HttpError` to short-circuit the handler with that status + body.
+   * Return `null` to preserve the existing `next(err)` fall-through. A
+   * throwing mapper does NOT crash tsadwyn — the original error is passed
+   * to `next(err)` and Express's default error handler takes over (500).
+   *
+   * Pairs with `exceptionMap()` for a declarative, introspectable map form.
+   */
+  errorMapper?: (err: unknown) => import("./exceptions.js").HttpError | null;
 }
 
 /**
@@ -236,6 +251,9 @@ export class Tsadwyn {
   /** T-2203: Separate input/output schemas flag. */
   separateInputOutputSchemas: boolean;
 
+  /** Domain exception → HttpError translator. Invoked in handler catch blocks. */
+  _errorMapper: ((err: unknown) => import("./exceptions.js").HttpError | null) | null;
+
   /**
    * Access the internal versioned routers map.
    * Used by the CLI and for introspection.
@@ -283,6 +301,9 @@ export class Tsadwyn {
 
     // T-2203: Separate input/output schemas
     this.separateInputOutputSchemas = options.separateInputOutputSchemas ?? false;
+
+    // Error mapper (domain exceptions → HttpError inside handler catch blocks)
+    this._errorMapper = options.errorMapper ?? null;
 
     // T-1003: Validate version format and ordering
     this._validateVersionFormat();
@@ -572,6 +593,7 @@ export class Tsadwyn {
       this.versions,
       this.dependencyOverrides,
       this.webhooks.routes.length > 0 ? this.webhooks.routes : undefined,
+      this._errorMapper ?? undefined,
     );
 
     // Store per-version routes for OpenAPI generation

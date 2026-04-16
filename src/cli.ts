@@ -25,6 +25,8 @@ import { pathToFileURL } from "node:url";
 import { resolve, join, dirname } from "node:path";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 
+import { isExceptionMapFn, type ExceptionMapEntry } from "./exception-map.js";
+
 /**
  * The version string reported by `tsadwyn --version` / `tsadwyn -V`.
  * Kept in sync with package.json's `version` field.
@@ -40,6 +42,17 @@ export const CLI_VERSION = "0.1.0";
 export interface CommandResult {
   exitCode: number;
   output: string[];
+}
+
+/**
+ * Alternative command-result shape for subcommands that emit tabular/JSON
+ * payloads and should distinguish between the primary output stream
+ * (stdout — the rendered data) and diagnostic / error output (stderr).
+ */
+export interface StreamedCommandResult {
+  exitCode: number;
+  stdout: string;
+  stderr: string;
 }
 
 /**
@@ -796,6 +809,151 @@ function emitResult(cmd: Command, result: CommandResult, errorCode: string): voi
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────
+// `exceptions` — introspect the configured errorMapper's exception table
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * Options accepted by the `exceptions` command.
+ */
+export interface ExceptionsOptions {
+  app: string;
+  format?: "table" | "json" | "markdown";
+  filter?: string;
+}
+
+/**
+ * Render an array of ExceptionMapEntry as a formatted output string per the
+ * requested format. Extracted for unit testing.
+ */
+function renderExceptionsTable(
+  entries: ReadonlyArray<ExceptionMapEntry>,
+  format: "table" | "json" | "markdown",
+): string {
+  if (format === "json") {
+    return JSON.stringify(entries, null, 2);
+  }
+
+  const rows = entries.map((e) => ({
+    name: e.name,
+    kind: e.kind,
+    status: e.status === null ? "(dyn)" : String(e.status),
+    code: e.code === null ? "(dyn)" : e.code,
+    transform: e.hasTransform ? "yes" : "no",
+  }));
+
+  const headers = ["Exception name", "Kind", "Status", "Code", "Transform?"];
+
+  if (format === "markdown") {
+    const lines: string[] = [];
+    lines.push(
+      `| ${headers.join(" | ")} |`,
+      `| ${headers.map(() => "---").join(" | ")} |`,
+    );
+    for (const r of rows) {
+      lines.push(
+        `| ${r.name} | ${r.kind} | ${r.status} | ${r.code} | ${r.transform} |`,
+      );
+    }
+    return lines.join("\n");
+  }
+
+  // ASCII table
+  const cols = [
+    { key: "name", label: headers[0] },
+    { key: "kind", label: headers[1] },
+    { key: "status", label: headers[2] },
+    { key: "code", label: headers[3] },
+    { key: "transform", label: headers[4] },
+  ] as const;
+  const widths = cols.map((c) =>
+    Math.max(c.label.length, ...rows.map((r) => (r as any)[c.key].length)),
+  );
+  const pad = (s: string, w: number) => s + " ".repeat(Math.max(0, w - s.length));
+  const sep =
+    "+-" + widths.map((w) => "-".repeat(w)).join("-+-") + "-+";
+  const render = (values: string[]) =>
+    "| " + values.map((v, i) => pad(v, widths[i])).join(" | ") + " |";
+
+  const lines: string[] = [];
+  lines.push(`Exception mappings (${entries.length} registered)`);
+  lines.push("");
+  lines.push(sep);
+  lines.push(render(cols.map((c) => c.label)));
+  lines.push(sep);
+  for (const r of rows) {
+    lines.push(render(cols.map((c) => (r as any)[c.key])));
+  }
+  lines.push(sep);
+  return lines.join("\n");
+}
+
+/**
+ * Run the `exceptions` command: load the user's app, look up the configured
+ * errorMapper, and if it's an introspectable ExceptionMapFn (produced by
+ * `exceptionMap()`), render its table in the requested format.
+ *
+ * Returns `{stdout, stderr, exitCode}`. Unlike `runCodegen` / `runInfo`, the
+ * rendered table is the primary stdout artifact; diagnostic messages go to
+ * stderr. Non-zero exit when the app has no introspectable mapper.
+ */
+export async function runExceptions(
+  options: ExceptionsOptions,
+): Promise<StreamedCommandResult> {
+  const format = options.format ?? "table";
+  try {
+    const mod = await loadAppModule(options.app);
+    const app = resolveAppInstance(mod);
+    if (!app) {
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          "Error: Could not find a Tsadwyn app export. " +
+          "The module should have a default export or a named 'app' export.",
+      };
+    }
+    const mapper = app._errorMapper;
+    if (!mapper) {
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          "Error: the loaded app does not have an errorMapper configured. " +
+          "`tsadwyn exceptions` requires an introspectable errorMapper built via `exceptionMap()`.",
+      };
+    }
+    if (!isExceptionMapFn(mapper)) {
+      return {
+        exitCode: 1,
+        stdout: "",
+        stderr:
+          "Error: the configured errorMapper is a plain function, not an introspectable ExceptionMapFn. " +
+          "Wrap your mapping with `exceptionMap()` to enable `tsadwyn exceptions` introspection.",
+      };
+    }
+
+    let entries = mapper.describe();
+    if (options.filter) {
+      const regex = new RegExp(options.filter);
+      entries = entries.filter((e) => regex.test(e.name));
+    }
+
+    return {
+      exitCode: 0,
+      stdout: renderExceptionsTable(entries, format),
+      stderr: "",
+    };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return {
+      exitCode: 1,
+      stdout: "",
+      stderr: `Error in exceptions command: ${message}`,
+    };
+  }
+}
+
 /**
  * Construct a fresh `Command` with every tsadwyn subcommand registered.
  *
@@ -838,6 +996,28 @@ export function createProgram(): Command {
         json: options.json,
       });
       emitResult(cmd, result, "tsadwyn.infoFailed");
+    });
+
+  cmd
+    .command("exceptions")
+    .description(
+      "Introspect the configured errorMapper's exception→HttpError table. " +
+        "Requires the app's errorMapper to be produced by `exceptionMap()`.",
+    )
+    .requiredOption("--app <path>", "Path to the module that exports the Tsadwyn app")
+    .option("--format <format>", "Output format: table (default) | json | markdown", "table")
+    .option("--filter <regex>", "Filter entries by name (regex)")
+    .action(async (options: ExceptionsOptions) => {
+      const result = await runExceptions(options);
+      if (result.stdout) process.stdout.write(result.stdout + "\n");
+      if (result.stderr) process.stderr.write(result.stderr + "\n");
+      if (result.exitCode !== 0) {
+        throw new CommanderError(
+          result.exitCode,
+          "tsadwyn.exceptionsFailed",
+          result.stderr || "exceptions command failed",
+        );
+      }
     });
 
   // ─────────────────────────────────────────────────────────────────────

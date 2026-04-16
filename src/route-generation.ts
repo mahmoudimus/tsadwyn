@@ -521,6 +521,13 @@ export function generateVersionedRouters(
    * returned in `versionedWebhookRoutes`.
    */
   webhookRoutes?: RouteDefinition[],
+  /**
+   * Optional domain-exception → HttpError mapper. Invoked inside each
+   * generated handler's catch block BEFORE the HTTP-likeness check, so
+   * domain exceptions become HttpErrors that flow through response
+   * migrations.
+   */
+  errorMapper?: (err: unknown) => HttpError | null,
 ): VersionedRouterResult {
   // Combine regular + webhook routes for validation and schema discovery
   const allRoutes = webhookRoutes
@@ -624,6 +631,7 @@ export function generateVersionedRouters(
         version.value,
         dependencyOverrides,
         versionedQuerySchema,
+        errorMapper,
       );
 
       // T-602: Collect middleware (router-level + route-level)
@@ -871,6 +879,7 @@ function createVersionedHandler(
   currentVersion: string,
   dependencyOverrides?: Map<Function, Function>,
   versionedQuerySchema?: ZodTypeAny | null,
+  errorMapper?: (err: unknown) => HttpError | null,
 ): (req: Request, res: Response, next: NextFunction) => void {
   const successStatus = routeDef.statusCode ?? 200;
 
@@ -1113,10 +1122,31 @@ function createVersionedHandler(
         res.status(successStatus).json(result);
       }
     } catch (err) {
+      // Consumer-supplied domain-exception → HttpError mapper. Invoked BEFORE
+      // the HTTP-likeness check so plain domain exceptions can be translated
+      // into HttpError and flow through the response-migration pipeline.
+      let mappedErr: unknown = err;
+      if (errorMapper) {
+        try {
+          const mapped = errorMapper(err);
+          if (mapped !== null && mapped !== undefined) {
+            mappedErr = mapped;
+          }
+        } catch {
+          // Mapper threw — don't crash the pipeline. Fall through to
+          // next(err) with the ORIGINAL error so Express's error handler
+          // renders a 500. The mapper's own error is swallowed (per spec:
+          // mapper failures must not mask handler failures).
+          next(err);
+          return;
+        }
+      }
+
       // T-1900: Intercept HttpError (or error-like objects with statusCode) and
       // run response migrations with migrateHttpErrors=true before sending the
       // error response. This mirrors Tsadwyn's HTTPException interception.
-      if (_isHttpLikeError(err)) {
+      if (_isHttpLikeError(mappedErr)) {
+        const err = mappedErr; // shadow for the existing block below
         const httpErr = err as { statusCode: number; body?: any; message?: string; headers?: Record<string, string> };
         const errStatusCode = httpErr.statusCode;
         const errBody = httpErr.body !== undefined

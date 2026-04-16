@@ -118,6 +118,15 @@ export type {
   CompareFn,
 } from "./version-upgrade.js";
 
+// Declarative exception→HttpError helper (pairs with errorMapper option)
+export { exceptionMap, isExceptionMapFn } from "./exception-map.js";
+export type {
+  ExceptionMapConfig,
+  ExceptionMapEntry,
+  ExceptionMapFn,
+  ExceptionMapping,
+} from "./exception-map.js";
+
 // T-1300 and T-1301: AST analysis and custom module loading
 // These features are N/A in the TypeScript version. In the Python Tsadwyn library,
 // T-1300 (AST analysis) uses Python's ast module to analyze and render versioned
