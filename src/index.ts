@@ -67,6 +67,7 @@ export {
   InvalidGenerationInstructionError,
   ModuleIsNotVersionedError,
   HttpError,
+  ValidationError,
 } from "./exceptions.js";
 
 // OpenAPI

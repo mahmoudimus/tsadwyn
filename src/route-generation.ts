@@ -29,6 +29,7 @@ import {
   RouteRequestBySchemaConverterDoesNotApplyToAnythingError,
   RouteResponseBySchemaConverterDoesNotApplyToAnythingError,
   HttpError,
+  ValidationError,
 } from "./exceptions.js";
 import { getSchemaName } from "./zod-extend.js";
 import { AlterSchemaInstructionFactory } from "./structure/schemas.js";
@@ -1076,16 +1077,14 @@ function createVersionedHandler(
 
   return async (req: Request, res: Response, next: NextFunction) => {
     try {
-      // T-600: Validate path parameters
+      // T-600: Validate path parameters. Thrown as ValidationError so
+      // the error flows through the catch block's errorMapper +
+      // migrateHttpErrors pipeline (consumer can reshape the envelope).
       if (routeDef.paramsSchema) {
         const paramsResult = routeDef.paramsSchema.safeParse(req.params);
         if (!paramsResult.success) {
-          res.status(422).json({
-            detail: paramsResult.error.errors,
-          });
-          return;
+          throw new ValidationError("params", paramsResult.error.errors);
         }
-        // Apply parsed params back (handles coercion)
         Object.assign(req.params, paramsResult.data);
       }
 
@@ -1094,12 +1093,8 @@ function createVersionedHandler(
       if (activeQuerySchema) {
         const queryResult = activeQuerySchema.safeParse(req.query);
         if (!queryResult.success) {
-          res.status(422).json({
-            detail: queryResult.error.errors,
-          });
-          return;
+          throw new ValidationError("query", queryResult.error.errors);
         }
-        // Apply parsed query back
         for (const [key, value] of Object.entries(queryResult.data as Record<string, any>)) {
           (req.query as any)[key] = value;
         }
@@ -1111,10 +1106,7 @@ function createVersionedHandler(
       if (versionedRequestSchema && body !== undefined && body !== null) {
         const parseResult = versionedRequestSchema.safeParse(body);
         if (!parseResult.success) {
-          res.status(422).json({
-            detail: parseResult.error.errors,
-          });
-          return;
+          throw new ValidationError("body", parseResult.error.errors);
         }
         body = parseResult.data;
       }
