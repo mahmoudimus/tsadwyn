@@ -101,6 +101,101 @@ tsadwyn automatically migrates requests from old versions to the latest format b
 
 For full documentation on the head-first API versioning pattern, see the [Cadwyn docs](https://docs.cadwyn.dev/) — the concepts carry over directly.
 
+## Client pinning
+
+tsadwyn implements the **Stripe-style per-client pinning** model. Every client is associated with a specific API version — the **version they signed up under** or upgraded to — and tsadwyn migrates requests and responses to match that pin transparently. The client never sees a behavior change unless they explicitly upgrade.
+
+Three terms you'll see throughout the docs:
+
+- **initial version** — the oldest supported version in the bundle. Clients that signed up before any changes shipped are pinned here. Still a first-class contract.
+- **previous version** — any version one step back from the latest. Useful when discussing "clients on the version right before we added X".
+- **latest / head version** — the newest version. Business logic runs against this shape; all migrations are expressed relative to it.
+
+Two widely-used patterns for deciding which version a request runs under:
+
+### 1. Explicit per-request header
+
+The simplest: the client sets `x-api-version` (or Stripe's `stripe-version`) on every request. Works out of the box with `new Tsadwyn({ apiVersionHeaderName: 'x-api-version' })`.
+
+### 2. Per-client default from your database (Stripe's model)
+
+Each client has a pinned version stored in a DB row. When no header is present, tsadwyn resolves the default from the authenticated identity. Pair the `preVersionPick` hook (runs auth before version resolution) with the `perClientDefaultVersion` helper:
+
+```ts
+import { Tsadwyn, perClientDefaultVersion } from 'tsadwyn';
+
+const app = new Tsadwyn({
+  versions: /* ... */,
+
+  preVersionPick: (req, res, next) => {
+    authenticate(req)
+      .then(user => { (req as any).user = user; next(); })
+      .catch(next);
+  },
+
+  apiVersionDefaultValue: perClientDefaultVersion({
+    identify:   req => (req as any).user?.accountId ?? null,
+    resolvePin: accountId => accountRepo.getApiVersion(accountId),
+    fallback:   '2024-01-15',                  // initial version
+    supportedVersions: bundle.versionValues,
+    onStalePin: 'fallback',                    // if stored pin isn't in bundle
+  }),
+
+  // Strict 400 when the header names a version that isn't in the bundle.
+  // Default is 'passthrough' (preserves historical behavior).
+  // Pass to versionPickingMiddleware options when you own the picker.
+});
+```
+
+An explicit `x-api-version` header always wins over the resolver — useful for staging, per-request overrides, and admin tooling.
+
+### Upgrade semantics
+
+When a client wants to upgrade, use the `validateVersionUpgrade` helper in your `/versioning/upgrade` handler:
+
+```ts
+import { validateVersionUpgrade } from 'tsadwyn';
+
+router.post('/versioning/upgrade', UpgradeReq, UpgradeRes, async (req) => {
+  const current = await accountRepo.getApiVersion(req.body.accountId);
+  const decision = validateVersionUpgrade({
+    current,
+    target: req.body.target,
+    supported: versions.versionValues,
+    // Defaults: allowDowngrade=false, allowNoChange=false, iso-date compare
+  });
+  if (!decision.ok) {
+    throw new HttpError(400, { code: decision.reason, detail: decision.detail });
+  }
+  await accountRepo.setApiVersion(req.body.accountId, decision.next);
+  return { previous_version: decision.previous, current_version: decision.next };
+});
+```
+
+Forward-only upgrades are the Stripe convention. `allowDowngrade: true` is available for admin force-pin flows.
+
+### Adopting tsadwyn incrementally alongside existing Express routes
+
+You don't have to version your whole surface at once. tsadwyn mounts on an Express app with fall-through semantics — the versioned dispatcher catches its registered paths, and everything else passes through to the rest of your Express chain:
+
+```ts
+const expressApp = express();
+expressApp.use(express.json());
+expressApp.use(authMiddleware);
+
+// tsadwyn handles the routes it owns
+const versioned = new Tsadwyn({ versions: /* ... */ });
+versioned.generateAndIncludeVersionedRouters(myVersionedRouter);
+expressApp.use(versioned.expressApp);
+
+// Existing unversioned routes still work — tsadwyn falls through on unregistered paths
+expressApp.use(existingRouter);
+```
+
+**One landmine to watch for:** path-to-regexp is first-match-wins. If you register a parameterized route like `GET /widgets/:id` before a sibling literal `GET /widgets/archived` (whether in tsadwyn or upstream Express), the wildcard will shadow the literal silently. tsadwyn emits a generation-time warning when it detects this; register the literal first to fix.
+
+For running examples of both patterns end-to-end, see [`examples/stripe-api.ts`](./examples/stripe-api.ts) (Stripe-style multi-version API) and [`examples/task-api.ts`](./examples/task-api.ts) (webhook versioning, CSV export via `raw()`, domain exceptions, `deletedResponseSchema`).
+
 ## API Reference
 
 ### Core

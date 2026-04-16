@@ -27,7 +27,38 @@ import {
   convertResponseToPreviousVersionFor,
   RequestInfo,
   ResponseInfo,
+  HttpError,
+  exceptionMap,
+  deletedResponseSchema,
 } from "../src/index.js";
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Domain exceptions (no HTTP semantics leak into service layers)
+//
+// Keyed by err.name string in exceptionMap — survives module-boundary
+// identity traps (Jest resetModules, dual-install, ESM/CJS interop).
+// ═══════════════════════════════════════════════════════════════════════════
+
+class NoSuchCustomerError extends Error {
+  constructor(public readonly customerId: string) {
+    super(`No such customer: '${customerId}'`);
+    this.name = "NoSuchCustomerError";
+  }
+}
+
+class NoSuchChargeError extends Error {
+  constructor(public readonly chargeId: string) {
+    super(`No such charge: '${chargeId}'`);
+    this.name = "NoSuchChargeError";
+  }
+}
+
+class NoSuchPaymentIntentError extends Error {
+  constructor(public readonly piId: string) {
+    super(`No such payment_intent: '${piId}'`);
+    this.name = "NoSuchPaymentIntentError";
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Schemas — latest version (2024-11-01)
@@ -109,6 +140,12 @@ const PaymentIntentResource = z.object({
   metadata: z.record(z.string()),
 }).named("PaymentIntentResource");
 
+// ── Deleted-resource envelopes (Stripe shape: {id, object, deleted}) ──────
+
+const DeletedCustomer = deletedResponseSchema("customer").named("DeletedCustomer");
+const DeletedCharge = deletedResponseSchema("charge").named("DeletedCharge");
+const DeletedPaymentIntent = deletedResponseSchema("payment_intent").named("DeletedPaymentIntent");
+
 // ── List wrappers ──────────────────────────────────────────────────────────
 
 const CustomerList = z.object({
@@ -170,8 +207,23 @@ router.post("/customers", CustomerCreate, CustomerResource, async (req) => {
 
 router.get("/customers/:customerId", null, CustomerResource, async (req) => {
   const c = customers[req.params.customerId];
-  if (!c) throw new Error("No such customer");
+  if (!c) throw new NoSuchCustomerError(req.params.customerId);
   return c;
+});
+
+// DELETE using Stripe's exact wire shape — verified via
+// `curl -X DELETE https://api.stripe.com/v1/customers/<id>`:
+// returns 200 + {id, object, deleted}, NOT 204.
+// Status 200 default is correct — 204 would strip the body on the wire.
+router.delete("/customers/:customerId", null, DeletedCustomer, async (req) => {
+  const c = customers[req.params.customerId];
+  if (!c) throw new NoSuchCustomerError(req.params.customerId);
+  delete customers[req.params.customerId];
+  return {
+    id: req.params.customerId,
+    object: "customer" as const,
+    deleted: true as const,
+  };
 });
 
 router.get("/customers", null, CustomerList, async () => {
@@ -202,7 +254,7 @@ router.post("/charges", ChargeCreate, ChargeResource, async (req) => {
 
 router.get("/charges/:chargeId", null, ChargeResource, async (req) => {
   const ch = charges[req.params.chargeId];
-  if (!ch) throw new Error("No such charge");
+  if (!ch) throw new NoSuchChargeError(req.params.chargeId);
   return ch;
 });
 
@@ -238,7 +290,7 @@ router.post("/payment_intents", PaymentIntentCreate, PaymentIntentResource,
 
 router.get("/payment_intents/:piId", null, PaymentIntentResource, async (req) => {
   const pi = paymentIntents[req.params.piId];
-  if (!pi) throw new Error("No such payment intent");
+  if (!pi) throw new NoSuchPaymentIntentError(req.params.piId);
   return pi;
 });
 
@@ -268,10 +320,9 @@ class RemoveSourceAddPaymentIntent extends VersionChange {
     "back-reference, added payment_intents.automatic_payment_methods";
 
   instructions = [
-    // In v2024-06-01, charges still had `source` alongside payment_method
-    schema(ChargeCreate).field("payment_method").had({
-      name: "payment_method",   // keep the field
-    }),
+    // In v2024-06-01, charges still had `source` alongside payment_method —
+    // no schema-side declaration is needed because the request migration
+    // below maps `source` → `payment_method` before validation.
     schema(ChargeResource).field("payment_intent").didntExist,
     schema(PaymentIntentCreate).field("automatic_payment_methods").didntExist,
     schema(PaymentIntentResource).field("automatic_payment_methods").didntExist,
@@ -423,6 +474,53 @@ const app = new Tsadwyn({
   ),
   title: "Stripe-like Payments API",
   apiVersionHeaderName: "stripe-version",
+
+  // Domain exceptions → HttpError. Matches Stripe's own error envelope
+  // shape: {error: {code, message, param?}}. Keyed by err.name string
+  // so dual-install / resetModules never break instanceof checks.
+  errorMapper: exceptionMap({
+    NoSuchCustomerError: (err) =>
+      new HttpError(404, {
+        error: {
+          code: "resource_missing",
+          message: err.message,
+          param: "id",
+          type: "invalid_request_error",
+        },
+      }),
+    NoSuchChargeError: (err) =>
+      new HttpError(404, {
+        error: {
+          code: "resource_missing",
+          message: err.message,
+          param: "id",
+          type: "invalid_request_error",
+        },
+      }),
+    NoSuchPaymentIntentError: (err) =>
+      new HttpError(404, {
+        error: {
+          code: "resource_missing",
+          message: err.message,
+          param: "id",
+          type: "invalid_request_error",
+        },
+      }),
+  }),
+
+  // In production, pair with perClientDefaultVersion() for per-account
+  // pinning from a DB lookup (and preVersionPick for auth). Example:
+  //
+  //   preVersionPick: (req, res, next) => { authenticate(req).then(u => {
+  //     (req as any).user = u; next();
+  //   }).catch(next); },
+  //   apiVersionDefaultValue: perClientDefaultVersion({
+  //     identify:   req => (req as any).user?.accountId ?? null,
+  //     resolvePin: accountId => accountRepo.getApiVersion(accountId),
+  //     fallback:   "2024-01-15",
+  //     supportedVersions: ["2024-11-01", "2024-06-01", "2024-01-15"],
+  //     onStalePin: "fallback",
+  //   }),
 });
 
 app.generateAndIncludeVersionedRouters(router);
@@ -436,8 +534,22 @@ app.expressApp.listen(PORT, () => {
   console.log(`\n  Stripe-like Payments API on http://localhost:${PORT}\n`);
   console.log("  Versions:  2024-01-15 │ 2024-06-01 │ 2024-11-01");
   console.log("  Header:    Stripe-Version: <date>");
-  console.log("  Docs:      http://localhost:${PORT}/docs");
-  console.log("  Changelog: http://localhost:${PORT}/changelog\n");
+  console.log(`  Docs:      http://localhost:${PORT}/docs`);
+  console.log(`  Changelog: http://localhost:${PORT}/changelog\n`);
+
+  console.log("  Try Stripe's exact DELETE pattern:");
+  console.log(`    1) POST /v1/customers → note the id`);
+  console.log(`    2) DELETE /v1/customers/<id> → 200 + {id, object, deleted}\n`);
+
+  console.log("  Domain error → HttpError via exceptionMap (404 resource_missing):");
+  console.log(`    curl -s -w '\\n%{http_code}\\n' http://localhost:${PORT}/v1/customers/cus_does_not_exist \\`);
+  console.log(`      -H 'stripe-version: 2024-11-01' | jq .\n`);
+
+  console.log("  Introspection (in another shell):");
+  console.log(`    npx tsx src/cli.ts routes      --app examples/stripe-api.ts --format table`);
+  console.log(`    npx tsx src/cli.ts migrations  --app examples/stripe-api.ts --schema CustomerResource --version 2024-01-15`);
+  console.log(`    npx tsx src/cli.ts simulate    --app examples/stripe-api.ts --method DELETE --path /v1/customers/cus_x --version 2024-06-01`);
+  console.log(`    npx tsx src/cli.ts exceptions  --app examples/stripe-api.ts --format table\n`);
 });
 
 export { app };
