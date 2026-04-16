@@ -14,6 +14,7 @@
  * Run:   npx tsx examples/stripe-api.ts
  */
 import crypto from "node:crypto";
+import type { Request } from "express";
 import { z } from "zod";
 import {
   Tsadwyn,
@@ -30,6 +31,8 @@ import {
   HttpError,
   exceptionMap,
   deletedResponseSchema,
+  createVersioningRoutes,
+  perClientDefaultVersion,
 } from "../src/index.js";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -176,6 +179,27 @@ const PaymentIntentList = z.object({
 const customers: Record<string, any> = {};
 const charges: Record<string, any> = {};
 const paymentIntents: Record<string, any> = {};
+
+// ─────────────────────────────────────────────────────────────────────────
+// Client → pinned version store (in-memory for the demo).
+// In production, this would be a column on the `accounts` table, a Redis
+// key, or a remote account-service call — the createVersioningRoutes and
+// perClientDefaultVersion helpers don't care. They only see these two
+// small callbacks (load + save).
+// ─────────────────────────────────────────────────────────────────────────
+const clientPins: Record<string, string> = {};
+const SUPPORTED_VERSIONS = ["2024-11-01", "2024-06-01", "2024-01-15"] as const;
+
+/**
+ * Extract the calling account from the request. In production this comes
+ * from the authenticated session (Stripe uses the secret key's account
+ * binding). Here we use an `x-account-id` header so curl examples are
+ * easy to run.
+ */
+function identifyAccount(req: Request): string | null {
+  const hdr = req.headers["x-account-id"];
+  return typeof hdr === "string" && hdr.length > 0 ? hdr : null;
+}
 
 function genId(prefix: string) {
   return `${prefix}_${crypto.randomUUID().replace(/-/g, "").slice(0, 24)}`;
@@ -476,6 +500,21 @@ class RenameBalanceAndAddPaymentIntents extends VersionChange {
 // Wire it up
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Pre-wired RESTful /versioning resource. tsadwyn owns no persistence —
+// loadVersion and saveVersion hand the callback off to our in-memory
+// store; any real consumer would back this with Postgres, Redis, or an
+// accounts microservice.
+const versioningRoutes = createVersioningRoutes({
+  identify: identifyAccount,
+  loadVersion: (accountId) => clientPins[accountId] ?? null,
+  saveVersion: (accountId, version) => {
+    clientPins[accountId] = version;
+  },
+  supportedVersions: SUPPORTED_VERSIONS,
+  // allowDowngrade: false,   // default
+  // allowNoChange:  false,   // default
+});
+
 const app = new Tsadwyn({
   versions: new VersionBundle(
     new Version("2024-11-01", RemoveSourceAddPaymentIntent),
@@ -484,6 +523,19 @@ const app = new Tsadwyn({
   ),
   title: "Stripe-like Payments API",
   apiVersionHeaderName: "stripe-version",
+
+  // When a client doesn't send `stripe-version`, fall back to their
+  // stored pin. Same identify callback as /versioning so there's one
+  // source of truth per account. onStalePin: 'fallback' means if an
+  // account has a pin we've since dropped from the bundle, tsadwyn
+  // treats them as unpinned and uses `fallback` instead.
+  apiVersionDefaultValue: perClientDefaultVersion({
+    identify: identifyAccount,
+    resolvePin: (accountId) => clientPins[accountId] ?? null,
+    fallback: "2024-01-15",
+    supportedVersions: SUPPORTED_VERSIONS,
+    onStalePin: "fallback",
+  }),
 
   // Domain exceptions → HttpError. Matches Stripe's own error envelope
   // shape: {error: {code, message, param?}}. Keyed by err.name string
@@ -517,23 +569,11 @@ const app = new Tsadwyn({
         },
       }),
   }),
-
-  // In production, pair with perClientDefaultVersion() for per-account
-  // pinning from a DB lookup (and preVersionPick for auth). Example:
-  //
-  //   preVersionPick: (req, res, next) => { authenticate(req).then(u => {
-  //     (req as any).user = u; next();
-  //   }).catch(next); },
-  //   apiVersionDefaultValue: perClientDefaultVersion({
-  //     identify:   req => (req as any).user?.accountId ?? null,
-  //     resolvePin: accountId => accountRepo.getApiVersion(accountId),
-  //     fallback:   "2024-01-15",
-  //     supportedVersions: ["2024-11-01", "2024-06-01", "2024-01-15"],
-  //     onStalePin: "fallback",
-  //   }),
 });
 
-app.generateAndIncludeVersionedRouters(router);
+// Mount domain routes + the /versioning resource. tsadwyn accepts N
+// VersionedRouters and merges them; both are versioned uniformly.
+app.generateAndIncludeVersionedRouters(router, versioningRoutes);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Start
@@ -554,6 +594,30 @@ app.expressApp.listen(PORT, () => {
   console.log("  Domain error → HttpError via exceptionMap (404 resource_missing):");
   console.log(`    curl -s -w '\\n%{http_code}\\n' http://localhost:${PORT}/v1/customers/cus_does_not_exist \\`);
   console.log(`      -H 'stripe-version: 2024-11-01' | jq .\n`);
+
+  console.log("  Self-service version upgrades via the /versioning resource:");
+  console.log(`    # 1) Read current pin — first read shows null (never pinned)`);
+  console.log(`    curl -s http://localhost:${PORT}/versioning -H 'x-account-id: acct_demo' | jq .\n`);
+  console.log(`    # 2) First-upgrade flow: from null → install initial pin`);
+  console.log(`    curl -s -X POST http://localhost:${PORT}/versioning \\`);
+  console.log(`      -H 'Content-Type: application/json' -H 'x-account-id: acct_demo' \\`);
+  console.log(`      -d '{"from": null, "to": "2024-01-15"}' | jq .\n`);
+  console.log(`    # 3) Now requests without stripe-version automatically use the pin`);
+  console.log(`    curl -s -X POST http://localhost:${PORT}/v1/customers \\`);
+  console.log(`      -H 'Content-Type: application/json' -H 'x-account-id: acct_demo' \\`);
+  console.log(`      -d '{"email":"a@b.c","name":"A"}' | jq .   # → account_balance shape (2024-01-15)\n`);
+  console.log(`    # 4) Upgrade to middle version`);
+  console.log(`    curl -s -X POST http://localhost:${PORT}/versioning \\`);
+  console.log(`      -H 'Content-Type: application/json' -H 'x-account-id: acct_demo' \\`);
+  console.log(`      -d '{"from": "2024-01-15", "to": "2024-06-01"}' | jq .\n`);
+  console.log(`    # 5) Drift rejection — stale 'from' triggers 409`);
+  console.log(`    curl -s -w '\\nstatus: %{http_code}\\n' -X POST http://localhost:${PORT}/versioning \\`);
+  console.log(`      -H 'Content-Type: application/json' -H 'x-account-id: acct_demo' \\`);
+  console.log(`      -d '{"from": "2024-01-15", "to": "2024-11-01"}' | jq .   # actual is now 2024-06-01\n`);
+  console.log(`    # 6) Downgrade blocked by default`);
+  console.log(`    curl -s -w '\\nstatus: %{http_code}\\n' -X POST http://localhost:${PORT}/versioning \\`);
+  console.log(`      -H 'Content-Type: application/json' -H 'x-account-id: acct_demo' \\`);
+  console.log(`      -d '{"from": "2024-06-01", "to": "2024-01-15"}' | jq .   # 400 downgrade-blocked\n`);
 
   console.log("  Introspection (in another shell):");
   console.log(`    npx tsx src/cli.ts routes      --app examples/stripe-api.ts --format table`);
