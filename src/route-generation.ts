@@ -1250,7 +1250,22 @@ function createVersionedHandler(
           migration.transformer(responseInfo);
         }
         _applyResponseInfoToExpressResponse(res, responseInfo);
-        res.status(responseInfo.statusCode).end();
+
+        // If migrations populated a body (e.g., legacy clients want a
+        // 200+{deleted: true} shape where head returns 204+empty), emit it.
+        // Otherwise keep the response body-less per HTTP spec for 204/304.
+        if (
+          responseInfo.body !== undefined &&
+          responseInfo.body !== null
+        ) {
+          const jsonBody = JSON.stringify(responseInfo.body);
+          const bodyBuffer = Buffer.from(jsonBody, "utf-8");
+          res.setHeader("content-length", bodyBuffer.length.toString());
+          res.setHeader("content-type", "application/json; charset=utf-8");
+          res.status(responseInfo.statusCode).end(jsonBody);
+        } else {
+          res.status(responseInfo.statusCode).end();
+        }
         return;
       }
 
@@ -1282,14 +1297,24 @@ function createVersionedHandler(
 
         _applyResponseInfoToExpressResponse(res, responseInfo);
 
-        // T-606: Recalculate content-length after response migration
-        const jsonBody = JSON.stringify(responseInfo.body);
-        const bodyBuffer = Buffer.from(jsonBody, "utf-8");
-        res.setHeader("content-length", bodyBuffer.length.toString());
-        res.setHeader("content-type", "application/json; charset=utf-8");
-        // For HEAD: HTTP spec requires no body. Content-Length still reflects
-        // the would-be body so intermediaries can size their buffers.
-        res.status(responseInfo.statusCode).end(isHead ? undefined : jsonBody);
+        // If a migration cleared the body (e.g., head 200+body → legacy
+        // 204+empty), emit an empty response rather than trying to
+        // JSON.stringify undefined.
+        if (
+          responseInfo.body === undefined ||
+          responseInfo.body === null
+        ) {
+          res.status(responseInfo.statusCode).end();
+        } else {
+          // T-606: Recalculate content-length after response migration
+          const jsonBody = JSON.stringify(responseInfo.body);
+          const bodyBuffer = Buffer.from(jsonBody, "utf-8");
+          res.setHeader("content-length", bodyBuffer.length.toString());
+          res.setHeader("content-type", "application/json; charset=utf-8");
+          // For HEAD: HTTP spec requires no body. Content-Length still reflects
+          // the would-be body so intermediaries can size their buffers.
+          res.status(responseInfo.statusCode).end(isHead ? undefined : jsonBody);
+        }
       } else {
         res.status(successStatus).json(result);
       }

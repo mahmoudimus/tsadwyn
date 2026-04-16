@@ -237,6 +237,67 @@ describe("Issue: 204 No Content — body-migration short-circuit", () => {
     // we don't crash, we don't throw, we don't silently drop.
   });
 
+  it("migrations on 204 routes can add a body + change status (head 204 → legacy 200+body)", async () => {
+    // Concrete scenario: head returns 204 No Content for DELETE /users/:id,
+    // but legacy clients (who shipped SDKs expecting a JSON envelope)
+    // should still get 200 { deleted: true, id }. A headerOnly migration
+    // opts into running on the body-less response and can BOTH add a body
+    // AND rewrite the status code.
+    const DeleteEnvelope = z
+      .object({ deleted: z.boolean(), id: z.string() })
+      .named("Issue204_DeleteEnvelope");
+
+    class LegacyReturnsEnvelope extends VersionChange {
+      description =
+        "legacy clients received 200+envelope for DELETE; head returns 204";
+      instructions = [];
+
+      r1 = convertResponseToPreviousVersionFor(DeleteEnvelope, {
+        headerOnly: true,
+      } as any)((res: ResponseInfo) => {
+        // Legacy shape: 200 with an envelope. Status and body both change.
+        res.statusCode = 200;
+        res.body = { deleted: true, id: "restored-by-migration" };
+      });
+    }
+
+    const router = new VersionedRouter();
+    router.delete(
+      "/users/:id",
+      null,
+      DeleteEnvelope,
+      async () => undefined,
+      { statusCode: 204 },
+    );
+
+    const app = new Tsadwyn({
+      versions: new VersionBundle(
+        new Version("2025-01-01", LegacyReturnsEnvelope),
+        new Version("2024-01-01"),
+      ),
+    });
+    app.generateAndIncludeVersionedRouters(router);
+
+    // Legacy client — expects 200 + envelope
+    const legacyRes = await request(app.expressApp)
+      .delete("/users/abc")
+      .set("x-api-version", "2024-01-01");
+
+    expect(legacyRes.status).toBe(200);
+    expect(legacyRes.body).toEqual({
+      deleted: true,
+      id: "restored-by-migration",
+    });
+
+    // Head client — still gets 204 empty
+    const headRes = await request(app.expressApp)
+      .delete("/users/abc")
+      .set("x-api-version", "2025-01-01");
+
+    expect(headRes.status).toBe(204);
+    expect(headRes.text).toBeFalsy();
+  });
+
   it("still respects migrateHttpErrors on a 204 route that throws HttpError", async () => {
     // A 204 route's success path has no body, but error paths have JSON bodies
     // and migrateHttpErrors still applies — short-circuit is only for successes.
