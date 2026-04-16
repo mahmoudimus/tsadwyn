@@ -542,6 +542,51 @@ export function generateVersionedRouters(
   // T-1604: Validate path-based converter usage against all routes
   validatePathConverterUsage(versions, allRoutes);
 
+  // Lint: wildcard-before-literal collisions.
+  // path-to-regexp is first-match-wins; if a parameterized route (e.g.,
+  // /widgets/:id) is registered before a sibling literal (/widgets/archived),
+  // the wildcard intercepts every request and — combined with any UUID/slug
+  // validator middleware on the wildcard — silently 400s the literal. Warn at
+  // generation time naming both routes so consumers can reorder (or fix
+  // upstream with explicit regex validators).
+  {
+    const sameMethodCheck = (a: string, b: string): boolean =>
+      a.toUpperCase() === b.toUpperCase();
+    const pathsCollide = (wildcardPath: string, literalPath: string): boolean => {
+      const aSeg = wildcardPath.split("/").filter((s) => s.length > 0);
+      const bSeg = literalPath.split("/").filter((s) => s.length > 0);
+      if (aSeg.length !== bSeg.length) return false;
+      let hasWildcardOverLiteral = false;
+      for (let i = 0; i < aSeg.length; i++) {
+        const a = aSeg[i];
+        const b = bSeg[i];
+        if (a.startsWith(":") && !b.startsWith(":")) {
+          hasWildcardOverLiteral = true;
+        } else if (a !== b) {
+          return false;
+        }
+      }
+      return hasWildcardOverLiteral;
+    };
+    for (let i = 0; i < versionedRouter.routes.length; i++) {
+      for (let j = i + 1; j < versionedRouter.routes.length; j++) {
+        const earlier = versionedRouter.routes[i];
+        const later = versionedRouter.routes[j];
+        if (!sameMethodCheck(earlier.method, later.method)) continue;
+        if (pathsCollide(earlier.path, later.path)) {
+          // eslint-disable-next-line no-console
+          console.warn(
+            `tsadwyn: route [${earlier.method}] ${earlier.path} is registered ` +
+              `before sibling literal [${later.method}] ${later.path}. path-to-regexp ` +
+              `is first-match-wins — the wildcard will intercept requests meant for ` +
+              `the literal. Reorder so the literal is registered first, or split ` +
+              `the wildcard's pattern to exclude the literal segment.`,
+          );
+        }
+      }
+    }
+  }
+
   // Lint: body-mutating path-based response migrations targeting routes that
   // return 204 (No Content) or 304 (Not Modified). Body transformers are
   // skipped on body-less responses — the migration is dead code unless it

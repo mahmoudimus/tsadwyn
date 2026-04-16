@@ -127,6 +127,9 @@ export type {
   ExceptionMapping,
 } from "./exception-map.js";
 
+// Outbound payload migration (webhooks, internal events)
+export { migratePayloadToVersion } from "./migrate-payload.js";
+
 // T-1300 and T-1301: AST analysis and custom module loading
 // These features are N/A in the TypeScript version. In the Python Tsadwyn library,
 // T-1300 (AST analysis) uses Python's ast module to analyze and render versioned
