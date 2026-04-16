@@ -235,6 +235,65 @@ For running examples of both patterns end-to-end, see [`examples/stripe-api.ts`]
 | `apiVersionStorage` | AsyncLocalStorage holding the current version |
 | `generateVersionedRouters` | Low-level router generation function |
 
+### Error handling
+
+| Export | Description |
+|--------|-------------|
+| `HttpError` | Throw from a handler to send a versionable error response (flows through `migrateHttpErrors: true` migrations) |
+| `TsadwynOptions.errorMapper` | `(err) => HttpError \| null` invoked in the handler catch block before the HTTP-likeness check — translate domain exceptions into HTTP errors without coupling your domain layer |
+| `exceptionMap(config)` | Declarative table form of `errorMapper` keyed by `err.name` (survives module-boundary identity drift) with introspection (`describe()`, `has`, `lookup`, `registeredNames`). Pass directly as `errorMapper`. |
+| `exceptionMap.merge(a, b, …)` | Merge multiple configs; throws `TsadwynStructureError` on duplicate keys |
+| `isExceptionMapFn(value)` | Type guard for introspectable mappers |
+
+### Middleware & version resolution
+
+| Export | Description |
+|--------|-------------|
+| `versionPickingMiddleware(options)` | Built-in middleware that extracts the version and runs the `apiVersionDefaultValue` resolver |
+| `VersionPickingOptions.onUnsupportedVersion` | `'reject'` (400 with `{error, sent, supported}`) \| `'fallback'` (substitute default + warn) \| `'passthrough'` (default, stores verbatim) |
+| `TsadwynOptions.preVersionPick` | Middleware that runs **before** `versionPickingMiddleware` — the place to put auth so `apiVersionDefaultValue` can read `req.user`. Scoped to versioned dispatch (utility endpoints bypass). |
+| `perClientDefaultVersion(opts)` | Canonical DB-backed default resolver: `identify` extracts client id, `resolvePin` loads their version, `onStalePin` handles bundle evictions. Per-request WeakMap cache. |
+
+### Helpers
+
+| Export | Description |
+|--------|-------------|
+| `deletedResponseSchema(objectName, extraFields?)` | Stripe-style `{id, object, deleted: true}` schema for DELETE endpoints (use with `statusCode: 200` — 204 strips the body at the wire level per RFC 9110) |
+| `raw({mimeType, supportsRanges?})` | Response-schema marker for binary/streaming routes; sets `Content-Type` at emission and marks response migrations targeting this route as dead code |
+| `migratePayloadToVersion(schemaName, payload, targetVersion, versionBundle)` | Standalone payload reshaper — runs the same response migrations used in-flight against an outbound webhook payload for the destination client's pin |
+| `buildBehaviorResolver(map, fallback, opts?)` | Resolve per-version behavior flags in handlers; reads from `apiVersionStorage`, optional `warn-once`/`warn-every` telemetry on unknown versions |
+| `validateVersionUpgrade(args)` | Pure policy helper for `/versioning/upgrade` endpoints. Discriminated-union result (`{ok, previous, next}` \| `{ok: false, reason}`). Blocks downgrade + no-change by default; `allowDowngrade`/`allowNoChange` opt-outs; `iso-date` / `semver` / custom comparator. |
+| `migrateResponseBody` | Standalone response migration utility (T-1701) |
+
+### Route & handler options
+
+| Export | Description |
+|--------|-------------|
+| `VersionedRouter.head(path, reqSchema, resSchema, handler, opts?)` | Explicit HEAD handler registration. Wins over Express's auto-mirror to GET. Pipeline skips response-body migrations on HEAD and emits no body at the wire (HEAD is body-less per HTTP spec). |
+| `RouteOptions.tags: string[]` | OpenAPI tags for Swagger/ReDoc grouping — flow into `operation.tags`. Composes with `endpoint().had({tags})` across versions. |
+| `RouteOptions.statusCode: number` | Override the emitted status code (default 200). Common: `201` for creates, `202` for async, `204` for truly body-less. |
+| `ResponseMigrationOptions.migrateHttpErrors: true` | Migration also runs on 4xx/5xx error responses |
+| `ResponseMigrationOptions.headerOnly: true` | Migration runs on body-less responses too (204, 304, null/undefined handler return) |
+
+### Introspection (programmatic)
+
+| Export | Description |
+|--------|-------------|
+| `dumpRouteTable(app, opts?)` | Enumerate registered routes per version; filter by method/path/visibility |
+| `inspectMigrationChain(app, opts)` | Return the ordered migration chain for a schema + client version, direction `'request'` or `'response'` |
+| `simulateRoute(app, opts)` | Simulate a request against the route table: matched route, every candidate with match reason, fallthrough diagnostics, migration chain summaries, up-migrated body preview |
+
+### Generation-time lints (free, no opt-in)
+
+tsadwyn warns at `generateAndIncludeVersionedRouters()` time on these common mistakes:
+
+- Wildcard route registered before a sibling literal (`/users/:id` before `/users/archived`) — path-to-regexp is first-match-wins and the wildcard shadows the literal silently.
+- `statusCode: 204` with a non-null `responseSchema` — Node strips the body at the wire level; body won't arrive at the client. Recommends `statusCode: 200` or `deletedResponseSchema()`.
+- Body-mutating response migration targeting a 204/304 route without `headerOnly: true` — dead code (body is stripped).
+- Response migration targeting a `raw()` route — dead code (body is opaque bytes, not JSON).
+- Both `.get()` and `.head()` registered for the same path — Express auto-mirrors GET to HEAD; explicit HEAD is rarely intentional when GET also exists.
+- Tags starting with `_TSADWYN` — reserved for internal bookkeeping.
+
 ## CLI
 
 tsadwyn ships a small CLI for codegen and introspection. When the package is installed, the `tsadwyn` binary is available on your `PATH`; during development you can invoke it with `npx tsx src/cli.ts`.
@@ -274,6 +333,98 @@ Options:
 | `--json` | Emit a single JSON line instead of formatted text, suitable for piping through `jq`. |
 
 tsadwyn's schemas are runtime Zod objects rather than source code, so `info` is the canonical way to introspect the versioned surface area of a deployed app.
+
+### `tsadwyn routes --app <path>`
+
+Enumerate the registered route table per version — complements `info` with per-route detail (handler name, schemas, tags, visibility). Useful for code review (`did this PR actually register the route?`), incident triage (`what's the v1 surface?`), and OpenAPI audit.
+
+```bash
+tsadwyn routes --app ./src/app.ts
+tsadwyn routes --app ./src/app.ts --version 2025-01-01
+tsadwyn routes --app ./src/app.ts --method POST --path-matches billing
+tsadwyn routes --app ./src/app.ts --format json | jq '.[] | select(.deprecated)'
+tsadwyn routes --app ./src/app.ts --include-private
+```
+
+| Flag | Description |
+|------|-------------|
+| `--app <path>` | Required. Path to the Tsadwyn app module. |
+| `--version <value>` | Restrict output to one version. Default: all versions. |
+| `--method <METHOD>` | Filter by HTTP method (case-insensitive). |
+| `--path-matches <pattern>` | Filter by path — regex source or substring. |
+| `--include-private` | Include routes with `includeInSchema: false`. |
+| `--format <format>` | `table` (default) \| `json` \| `markdown`. |
+
+### `tsadwyn migrations --app <path> --schema <name> --version <value>`
+
+Show the ordered migration chain that fires for a given schema + client version. Answers "why is my v1 client receiving a v2-shape field?" without stepping through code.
+
+```bash
+# Response migrations (head → client) for UserResponse at 2024-01-01
+tsadwyn migrations --app ./src/app.ts --schema UserResponse --version 2024-01-01
+
+# Request direction (client → head)
+tsadwyn migrations --app ./src/app.ts --schema UserCreateRequest --version 2024-01-01 --direction request
+
+# JSON output for piping
+tsadwyn migrations --app ./src/app.ts --schema UserResponse --version 2024-01-01 --format json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--app <path>` | Required. |
+| `--schema <name>` | Required. Schema name (set via `.named()`). |
+| `--version <value>` | Required. Client pin version. |
+| `--direction <dir>` | `response` (default) \| `request`. |
+| `--path <path>` | Scope to a single path-based migration target. |
+| `--method <method>` | Paired with `--path`. |
+| `--no-error-migrations` | Exclude migrations with `migrateHttpErrors: true`. |
+| `--format <format>` | `pipeline` (default) \| `json`. |
+
+### `tsadwyn simulate --app <path> --method <M> --path <p>`
+
+Simulate a request against the route table *without* dispatching. Answers "is tsadwyn responsible for this 4xx?" and "what migrations would fire?" in one command. Essential during incident triage.
+
+```bash
+# Matched route + candidates + migration chain
+tsadwyn simulate --app ./src/app.ts \
+  --method POST --path /api/virtual-accounts/abc/payout \
+  --version 2025-06-01
+
+# With body — get an up-migrated preview (head-shape body the handler sees)
+tsadwyn simulate --app ./src/app.ts \
+  --method POST --path /api/charges --version 2024-01-01 \
+  --body '{"amount": 100}'
+
+# JSON for piping
+tsadwyn simulate --app ./src/app.ts --method GET --path /api/users/xyz \
+  --version 2024-01-01 --format json
+```
+
+| Flag | Description |
+|------|-------------|
+| `--app <path>` | Required. |
+| `--method <METHOD>` | Required. |
+| `--path <path>` | Required. |
+| `--version <value>` | API version. Explicit overrides headers/default. |
+| `--body <json>` | Optional. Enables `upMigratedBody` preview. |
+| `--format <format>` | `table` (default) \| `json`. |
+
+### `tsadwyn exceptions --app <path>`
+
+Introspect the configured `errorMapper`'s exception → HttpError table. Requires the app's mapper to be built via `exceptionMap()` (plain function mappers aren't introspectable).
+
+```bash
+tsadwyn exceptions --app ./src/app.ts
+tsadwyn exceptions --app ./src/app.ts --format json | jq '.[] | select(.kind == "function")'
+tsadwyn exceptions --app ./src/app.ts --filter '^Idempotency'
+```
+
+| Flag | Description |
+|------|-------------|
+| `--app <path>` | Required. |
+| `--format <format>` | `table` (default) \| `json` \| `markdown`. |
+| `--filter <regex>` | Filter entries by exception class name. |
 
 ### `tsadwyn new version --date <YYYY-MM-DD>`
 
