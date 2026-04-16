@@ -118,6 +118,11 @@ export type {
   CompareFn,
 } from "./version-upgrade.js";
 
+// Pre-wired RESTful /versioning resource (GET + POST with optimistic
+// concurrency) built on top of validateVersionUpgrade.
+export { createVersioningRoutes } from "./versioning-routes.js";
+export type { CreateVersioningRoutesOptions } from "./versioning-routes.js";
+
 // Declarative exception→HttpError helper (pairs with errorMapper option)
 export { exceptionMap, isExceptionMapFn } from "./exception-map.js";
 export type {

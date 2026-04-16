@@ -149,20 +149,68 @@ const app = new Tsadwyn({
 
 An explicit `x-api-version` header always wins over the resolver — useful for staging, per-request overrides, and admin tooling.
 
-### Upgrade semantics
+### Upgrade semantics — the `/versioning` resource
 
-When a client wants to upgrade, use the `validateVersionUpgrade` helper in your `/versioning/upgrade` handler:
+tsadwyn ships a pre-wired RESTful `/versioning` resource so consumers don't have to hand-roll the upgrade endpoint. Consumer supplies identify / load / save callbacks; tsadwyn does the rest (policy check via `validateVersionUpgrade`, optimistic concurrency, error envelopes).
 
 ```ts
-import { validateVersionUpgrade } from 'tsadwyn';
+import { Tsadwyn, VersionBundle, createVersioningRoutes } from 'tsadwyn';
 
-router.post('/versioning/upgrade', UpgradeReq, UpgradeRes, async (req) => {
+const versions = new VersionBundle(/* ... */);
+
+const versioningRoutes = createVersioningRoutes({
+  // path: '/versioning',                              // default
+  identify:    req => (req as any).user?.accountId ?? null,
+  loadVersion: accountId => accountRepo.getApiVersion(accountId),
+  saveVersion: (accountId, v) => accountRepo.setApiVersion(accountId, v),
+  supportedVersions: versions.versionValues,
+  // allowDowngrade: false,                            // default
+  // allowNoChange:  false,                            // default
+  // compare:  'iso-date',                             // 'semver' | custom fn
+});
+
+const app = new Tsadwyn({ versions, preVersionPick: authMiddleware });
+app.generateAndIncludeVersionedRouters(versioningRoutes, myDomainRoutes);
+```
+
+The resource:
+
+| Method | Body | Success 200 | Failure |
+|---|---|---|---|
+| `GET /versioning` | — | `{version, supported[], latest}` | 401 unauthenticated |
+| `POST /versioning` | `{from, to}` | `{previous_version, current_version}` | **409** `version_mismatch` (`from` ≠ stored), **400** `unsupported` / `downgrade-blocked` / `no-change`, **401** unauthenticated, **422** malformed body |
+
+Two design decisions worth calling out:
+
+**1. Optimistic concurrency via `{from, to}`.** The client reads their current pin with GET, then posts `{from: <current>, to: <target>}`. If another actor (an admin force-pin, a replicated DB converging) changed the stored pin in between, the server rejects with 409 rather than silently overwriting:
+
+```json
+{ "error": "version_mismatch", "expected": "2024-01-01", "actual": "2025-01-01" }
+```
+
+The client re-reads and decides whether to retry.
+
+**2. First-upgrade convention.** A client who has never explicitly pinned a version reads `GET /versioning` → `{version: null, …}`. Their first upgrade passes `from: null` to install the initial pin:
+
+```http
+POST /versioning
+{ "from": null, "to": "2024-01-01" }
+
+HTTP/1.1 200 OK
+{ "previous_version": null, "current_version": "2024-01-01" }
+```
+
+**Admin force-pin** (bypass the forward-only policy) is supported via `allowDowngrade: true`. The test suite covers this case. Typically the admin endpoint is a separate route that mounts its own version of `createVersioningRoutes({...allowDowngrade: true, identify: adminIdentify})` with a different auth scope.
+
+If you need finer control than the helper provides, the underlying pieces — `validateVersionUpgrade` + `HttpError` — compose directly:
+
+```ts
+router.post('/versioning', UpgradeReq, UpgradeRes, async (req) => {
   const current = await accountRepo.getApiVersion(req.body.accountId);
   const decision = validateVersionUpgrade({
     current,
     target: req.body.target,
     supported: versions.versionValues,
-    // Defaults: allowDowngrade=false, allowNoChange=false, iso-date compare
   });
   if (!decision.ok) {
     throw new HttpError(400, { code: decision.reason, detail: decision.detail });
@@ -172,7 +220,7 @@ router.post('/versioning/upgrade', UpgradeReq, UpgradeRes, async (req) => {
 });
 ```
 
-Forward-only upgrades are the Stripe convention. `allowDowngrade: true` is available for admin force-pin flows.
+Forward-only upgrades are the Stripe convention — `allowDowngrade: true` is the admin escape hatch.
 
 ### Adopting tsadwyn incrementally alongside existing Express routes
 
@@ -262,7 +310,8 @@ For running examples of both patterns end-to-end, see [`examples/stripe-api.ts`]
 | `raw({mimeType, supportsRanges?})` | Response-schema marker for binary/streaming routes; sets `Content-Type` at emission and marks response migrations targeting this route as dead code |
 | `migratePayloadToVersion(schemaName, payload, targetVersion, versionBundle)` | Standalone payload reshaper — runs the same response migrations used in-flight against an outbound webhook payload for the destination client's pin |
 | `buildBehaviorResolver(map, fallback, opts?)` | Resolve per-version behavior flags in handlers; reads from `apiVersionStorage`, optional `warn-once`/`warn-every` telemetry on unknown versions |
-| `validateVersionUpgrade(args)` | Pure policy helper for `/versioning/upgrade` endpoints. Discriminated-union result (`{ok, previous, next}` \| `{ok: false, reason}`). Blocks downgrade + no-change by default; `allowDowngrade`/`allowNoChange` opt-outs; `iso-date` / `semver` / custom comparator. |
+| `validateVersionUpgrade(args)` | Pure policy helper. Discriminated-union result (`{ok, previous, next}` \| `{ok: false, reason}`). Blocks downgrade + no-change by default; `allowDowngrade`/`allowNoChange` opt-outs; `iso-date` / `semver` / custom comparator. |
+| `createVersioningRoutes(opts)` | Pre-wired `VersionedRouter` exposing the RESTful `/versioning` resource (GET + POST with optimistic concurrency). Wraps `validateVersionUpgrade` with identify/load/save callbacks so consumers don't hand-roll the endpoint. |
 | `migrateResponseBody` | Standalone response migration utility (T-1701) |
 
 ### Route & handler options
