@@ -122,6 +122,8 @@ export interface AlterResponseBySchemaInstruction {
   methodName: string;
   migrateHttpErrors: boolean;
   checkUsage: boolean;
+  /** When true, migration runs on body-less responses (HEAD, 204, 304). */
+  headerOnly: boolean;
 }
 
 /**
@@ -145,6 +147,8 @@ export interface AlterResponseByPathInstruction {
   transformer: (response: ResponseInfo) => void;
   methodName: string;
   migrateHttpErrors: boolean;
+  /** When true, migration runs on body-less responses (HEAD, 204, 304). */
+  headerOnly: boolean;
 }
 
 /**
@@ -160,6 +164,15 @@ export interface RequestMigrationOptions {
 export interface ResponseMigrationOptions {
   migrateHttpErrors?: boolean;
   checkUsage?: boolean;
+  /**
+   * When true, the migration runs even on body-less responses (HEAD, 204 No
+   * Content, 304 Not Modified). Use when your transformer only touches
+   * `res.headers` and doesn't depend on `res.body` being populated.
+   *
+   * Composes with `migrateHttpErrors: true` — a migration flagged both
+   * headerOnly and migrateHttpErrors runs on error responses too.
+   */
+  headerOnly?: boolean;
 }
 
 /**
@@ -324,9 +337,13 @@ export function convertResponseToPreviousVersionFor(
 
     // Check for options in rest
     let migrateHttpErrors = false;
+    let headerOnly = false;
     for (const arg of rest) {
       if (arg && typeof arg === "object" && "migrateHttpErrors" in arg) {
         migrateHttpErrors = arg.migrateHttpErrors ?? false;
+      }
+      if (arg && typeof arg === "object" && "headerOnly" in arg) {
+        headerOnly = arg.headerOnly ?? false;
       }
     }
 
@@ -345,6 +362,7 @@ export function convertResponseToPreviousVersionFor(
           transformer: (response: ResponseInfo) => originalMethod.call(targetOrTransformer, response),
           methodName: String(propertyKeyOrUndefined),
           migrateHttpErrors,
+          headerOnly,
         };
         descriptorOrUndefined.value = instruction;
         return descriptorOrUndefined;
@@ -359,6 +377,7 @@ export function convertResponseToPreviousVersionFor(
         transformer,
         methodName: transformer.name || "anonymous",
         migrateHttpErrors,
+        headerOnly,
       };
       return instruction;
     };
@@ -387,6 +406,7 @@ export function convertResponseToPreviousVersionFor(
 
   const migrateHttpErrors = options.migrateHttpErrors !== undefined ? options.migrateHttpErrors : false;
   const checkUsage = options.checkUsage !== undefined ? options.checkUsage : true;
+  const headerOnly = options.headerOnly ?? false;
 
   const schemaNames = schemas.map((s) => {
     const name = _getSchemaName(s);
@@ -411,6 +431,7 @@ export function convertResponseToPreviousVersionFor(
         methodName: String(propertyKeyOrUndefined),
         migrateHttpErrors,
         checkUsage,
+        headerOnly,
       };
       descriptorOrUndefined.value = instruction;
       return descriptorOrUndefined;
@@ -425,6 +446,7 @@ export function convertResponseToPreviousVersionFor(
       methodName: transformer.name || "anonymous",
       migrateHttpErrors,
       checkUsage,
+      headerOnly,
     };
     return instruction;
   };

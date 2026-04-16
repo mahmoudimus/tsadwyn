@@ -208,6 +208,8 @@ function validatePathConverterUsage(versions: VersionBundle, routes: RouteDefini
 interface ResponseMigration {
   transformer: (response: ResponseInfo) => void;
   migrateHttpErrors: boolean;
+  /** When true, migration runs on body-less responses (HEAD, 204, 304). */
+  headerOnly: boolean;
 }
 
 /**
@@ -540,6 +542,38 @@ export function generateVersionedRouters(
   // T-1604: Validate path-based converter usage against all routes
   validatePathConverterUsage(versions, allRoutes);
 
+  // Lint: body-mutating path-based response migrations targeting routes that
+  // return 204 (No Content) or 304 (Not Modified). Body transformers are
+  // skipped on body-less responses — the migration is dead code unless it
+  // declares `headerOnly: true` (which opts in to running on body-less).
+  for (const version of versions.versions) {
+    for (const change of version.changes) {
+      for (const [path, instrs] of change._alterResponseByPathInstructions) {
+        for (const instr of instrs) {
+          if ((instr as any).headerOnly) continue;
+          const normalizedPath = path.replace(/\/+$/, "");
+          for (const method of instr.methods) {
+            const route = allRoutes.find(
+              (r) =>
+                r.path.replace(/\/+$/, "") === normalizedPath &&
+                r.method.toUpperCase() === method,
+            );
+            if (!route) continue;
+            if (route.statusCode === 204 || route.statusCode === 304) {
+              // eslint-disable-next-line no-console
+              console.warn(
+                `tsadwyn: response migration "${instr.methodName}" targets ` +
+                  `${method} ${path} which returns statusCode ${route.statusCode}. ` +
+                  `Body transformers are skipped on body-less responses — use ` +
+                  `{ headerOnly: true } if your migration only touches headers.`,
+              );
+            }
+          }
+        }
+      }
+    }
+  }
+
   const baseRegistry = buildRegistryFromRoutes(allRoutes, versions);
   const versionedSchemas = generateVersionedSchemas(versions, baseRegistry);
   const result = new Map<string, Router>();
@@ -564,8 +598,26 @@ export function generateVersionedRouters(
     const router = Router();
     const registry = versionedSchemas.get(version.value);
 
+    // Track methods-per-path for this version so we can:
+    //   (a) emit a warn when both GET and HEAD are explicitly registered
+    //   (b) register a 405-with-Allow HEAD catch-all for paths that have
+    //       other methods but no GET and no explicit HEAD.
+    const methodsPerPath = new Map<string, Set<string>>();
+
+    // Reorder routes so explicit HEAD entries precede their GET siblings for
+    // the same path. Express's Route object auto-falls-back HEAD → GET when a
+    // Route matches the path; iterating Routes in registration order means the
+    // first GET match will intercept HEAD before a later explicit HEAD Route
+    // is reached. Registering HEAD first makes the explicit handler win.
+    const sortedRoutes = [...currentRoutes].sort((a, b) => {
+      if (a.path !== b.path) return 0;
+      if (a.method === "HEAD" && b.method === "GET") return -1;
+      if (a.method === "GET" && b.method === "HEAD") return 1;
+      return 0;
+    });
+
     // Mount only non-deleted, non-webhook routes for this version
-    for (const routeDef of currentRoutes) {
+    for (const routeDef of sortedRoutes) {
       if (routeDef.tags.includes(_DELETED_ROUTE_TAG)) {
         continue; // Skip deleted routes
       }
@@ -574,12 +626,22 @@ export function generateVersionedRouters(
       if (webhookPaths.has(routeKey)) {
         continue;
       }
+
+      // Record method for path so we can compute 405 Allow / overlap warnings below.
+      const method = routeDef.method.toUpperCase();
+      if (!methodsPerPath.has(routeDef.path)) {
+        methodsPerPath.set(routeDef.path, new Set());
+      }
+      methodsPerPath.get(routeDef.path)!.add(method);
+
       const expressMethod = routeDef.method.toLowerCase() as
         | "get"
         | "post"
         | "put"
         | "patch"
-        | "delete";
+        | "delete"
+        | "head"
+        | "options";
 
       // Determine the versioned request schema for validation
       const requestSchemaName = getSchemaName(routeDef.requestSchema);
@@ -646,6 +708,34 @@ export function generateVersionedRouters(
         router[expressMethod](routeDef.path, ...allMiddleware, handler);
       } else {
         router[expressMethod](routeDef.path, handler);
+      }
+    }
+
+    // HEAD method post-processing for this version:
+    // 1. Warn when both GET and an explicit HEAD are registered for the same
+    //    path — the explicit HEAD will override Express's auto-mirror, which
+    //    is rarely the intent.
+    // 2. Register a 405 Method Not Allowed + Allow handler for HEAD on paths
+    //    that have other methods registered but no GET (no auto-mirror) and
+    //    no explicit HEAD. Otherwise HEAD on such paths 404s silently.
+    for (const [path, methods] of methodsPerPath) {
+      if (methods.has("GET") && methods.has("HEAD")) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `tsadwyn: route ${path} has BOTH GET and HEAD registered. Express ` +
+            `auto-mirrors HEAD → GET; an explicit HEAD handler overrides that. ` +
+            `Verify both handlers are intentional, or remove the HEAD to rely ` +
+            `on auto-mirror.`,
+        );
+      }
+      if (!methods.has("GET") && !methods.has("HEAD")) {
+        const allowList = [...methods, "OPTIONS"].sort().join(", ");
+        router.head(path, (_req, res) => {
+          res.setHeader("Allow", allowList);
+          res.status(405).json({
+            detail: `Method Not Allowed. Allowed: ${allowList}`,
+          });
+        });
       }
     }
 
@@ -766,6 +856,7 @@ function collectResponseMigrations(
             migrations.push({
               transformer: instr.transformer,
               migrateHttpErrors: instr.migrateHttpErrors,
+              headerOnly: (instr as any).headerOnly ?? false,
             });
           }
         }
@@ -779,6 +870,7 @@ function collectResponseMigrations(
             migrations.push({
               transformer: instr.transformer,
               migrateHttpErrors: instr.migrateHttpErrors,
+              headerOnly: (instr as any).headerOnly ?? false,
             });
           }
         }
@@ -1090,6 +1182,33 @@ function createVersionedHandler(
         }
       }
 
+      // Detect body-less contexts. tsadwyn's default is permissive: a 204
+      // response MAY carry a body if the handler returned one (Stripe-style —
+      // Stripe returns bodies with 204 on some endpoints even though RFC
+      // 9110 §15.3.5 says 204 "cannot contain content"). Consumers relying on
+      // that behavior get it out of the box.
+      //
+      // The short-circuit only triggers when the handler's return value is
+      // `null` or `undefined` — then we emit status + empty body and skip
+      // body-mutating response migrations (running only `headerOnly` or
+      // `migrateHttpErrors`-flagged migrations, which opt in to body-less
+      // contexts explicitly).
+      const isHead = req.method === "HEAD";
+      const isNullResult = result === undefined || result === null;
+
+      if (isNullResult && !isHead) {
+        const responseInfo = new ResponseInfo(undefined, successStatus);
+        for (const migration of responseMigrations) {
+          if (!migration.headerOnly && !migration.migrateHttpErrors) {
+            continue;
+          }
+          migration.transformer(responseInfo);
+        }
+        _applyResponseInfoToExpressResponse(res, responseInfo);
+        res.status(responseInfo.statusCode).end();
+        return;
+      }
+
       // T-403: Handle array and object response bodies - deep clone to avoid mutation
       const responseBody =
         typeof result === "object" && result !== null
@@ -1103,8 +1222,14 @@ function createVersionedHandler(
           successStatus,
         );
         for (const migration of responseMigrations) {
-          // T-401: Skip response migration if status >= 300 and migrateHttpErrors is false
-          if (responseInfo.statusCode >= 300 && !migration.migrateHttpErrors) {
+          // T-401: Skip response migration if status >= 300 and migrateHttpErrors is false.
+          // HEAD is treated like a body-less response — same skip semantics
+          // (only migrateHttpErrors-flagged or headerOnly migrations run).
+          if (
+            (isHead || responseInfo.statusCode >= 300) &&
+            !migration.migrateHttpErrors &&
+            !migration.headerOnly
+          ) {
             continue;
           }
           migration.transformer(responseInfo);
@@ -1117,7 +1242,9 @@ function createVersionedHandler(
         const bodyBuffer = Buffer.from(jsonBody, "utf-8");
         res.setHeader("content-length", bodyBuffer.length.toString());
         res.setHeader("content-type", "application/json; charset=utf-8");
-        res.status(responseInfo.statusCode).end(jsonBody);
+        // For HEAD: HTTP spec requires no body. Content-Length still reflects
+        // the would-be body so intermediaries can size their buffers.
+        res.status(responseInfo.statusCode).end(isHead ? undefined : jsonBody);
       } else {
         res.status(successStatus).json(result);
       }

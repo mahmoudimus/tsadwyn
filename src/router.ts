@@ -110,6 +110,16 @@ export interface RouteOptions {
   responses?: Record<string, any>;
   /** T-2003: Callbacks for OpenAPI. */
   callbacks?: Array<{ path: string; method: string; description?: string }>;
+  /**
+   * OpenAPI tags for grouping this route in generated Swagger UI / ReDoc
+   * output. Flow into `RouteDefinition.tags` at registration and compose
+   * with any `endpoint().had({tags})` mutations in downstream VersionChanges
+   * (the `had` form is a REPLACEMENT, not a merge).
+   *
+   * Tags starting with `_TSADWYN` are reserved for internal use and emit
+   * a registration-time warning.
+   */
+  tags?: string[];
 }
 
 /**
@@ -163,6 +173,29 @@ export class VersionedRouter {
   ): void {
     // T-603: Apply prefix
     const fullPath = this.prefix ? this.prefix + path : path;
+
+    // Tags — registration-time warn for reserved _TSADWYN prefix; dedup preserves
+    // insertion order so OpenAPI output doesn't shuffle consumer intent.
+    const optionTags = options?.tags ?? [];
+    for (const t of optionTags) {
+      if (t.startsWith("_TSADWYN")) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `tsadwyn: tag "${t}" on route [${method}] ${fullPath} starts with the ` +
+            `reserved "_TSADWYN" prefix. Tags starting with "_TSADWYN" are reserved ` +
+            `for internal tsadwyn bookkeeping — rename to avoid future collisions.`,
+        );
+      }
+    }
+    const seenTags = new Set<string>();
+    const dedupedTags: string[] = [];
+    for (const t of optionTags) {
+      if (!seenTags.has(t)) {
+        seenTags.add(t);
+        dedupedTags.push(t);
+      }
+    }
+
     this.routes.push({
       method,
       path: fullPath,
@@ -170,7 +203,7 @@ export class VersionedRouter {
       responseSchema,
       handler,
       funcName: handler.name || null,
-      tags: [],
+      tags: dedupedTags,
       statusCode: options?.statusCode ?? 200,
       deprecated: false,
       summary: "",
@@ -243,6 +276,28 @@ export class VersionedRouter {
     options?: RouteOptions,
   ): void {
     this.addRoute("DELETE", path, requestSchema, responseSchema, handler, options);
+  }
+
+  /**
+   * Explicit HEAD handler registration. HEAD is GET without a body —
+   * consumers use it for existence checks and cache validation. When no
+   * explicit HEAD is registered for a path that has a GET, Express
+   * auto-mirrors the GET handler. Explicit registration wins for precise
+   * HEAD-specific semantics (skip expensive body computation, HEAD-only
+   * cache validators).
+   *
+   * Handlers return void — HEAD responses carry no body per HTTP spec.
+   */
+  head<TReq extends ZodTypeAny | null = null, TRes extends ZodTypeAny | null = null>(
+    path: string,
+    requestSchema: TReq,
+    responseSchema: TRes,
+    handler: (
+      req: TypedRequest<TReq extends ZodType ? z.infer<TReq> : unknown>,
+    ) => Promise<void | (TRes extends ZodType ? z.infer<TRes> : any)>,
+    options?: RouteOptions,
+  ): void {
+    this.addRoute("HEAD", path, requestSchema, responseSchema, handler as any, options);
   }
 
   /**

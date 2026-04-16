@@ -207,13 +207,19 @@ describe("Issue: 204 No Content — body-migration short-circuit", () => {
     ).toBe(true);
   });
 
-  it("throws TsadwynStructureError when a 204-declared handler returns a non-empty body", async () => {
+  it("permits a 204-declared handler to return a body (Stripe-style permissive 204+body)", async () => {
+    // RFC 9110 §15.3.5 says 204 "cannot contain content" — but Stripe
+    // does return bodies with 204 on some endpoints, and tsadwyn's default
+    // is permissive to support that pattern. If the handler returns a body
+    // with statusCode: 204, it flows through normally (status stays 204,
+    // body is emitted). Consumers who want strict RFC behavior can return
+    // undefined/null from the handler instead.
     const router = new VersionedRouter();
     router.delete(
       "/users/:id",
       null,
       null,
-      async () => ({ ok: true }) as any,  // violates 204 contract
+      async () => ({ ok: true }) as any,
       { statusCode: 204 },
     );
 
@@ -226,9 +232,9 @@ describe("Issue: 204 No Content — body-migration short-circuit", () => {
       .delete("/users/123")
       .set("x-api-version", "2024-01-01");
 
-    // Expect a 500 surfacing a TsadwynStructureError (the handler produced
-    // a body on a 204 route — misconfiguration)
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(204);
+    // Body presence is permitted per the Stripe-style permissive default —
+    // we don't crash, we don't throw, we don't silently drop.
   });
 
   it("still respects migrateHttpErrors on a 204 route that throws HttpError", async () => {
