@@ -298,6 +298,172 @@ describe("Issue: 204 No Content — body-migration short-circuit", () => {
     expect(headRes.text).toBeFalsy();
   });
 
+  it("schema-based migration runs on 204+body routes but Node strips the body at the wire (document the constraint)", async () => {
+    // Scenario: API evolved from
+    //   v1:  DELETE /users/:id → 204 { deleted: true }
+    //   v2:  DELETE /users/:id → 204 { response: { deleted, deleted_at, deleted_by } }
+    //
+    // tsadwyn's migration pipeline runs against the handler's body correctly
+    // — the transformer IS called, and res.body IS reshaped. But per RFC
+    // 9110 §15.3.5 a 204 response carries no content, and Node's HTTP writer
+    // enforces that at the wire level: the body bytes are never sent to the
+    // client even when Express/tsadwyn writes them to the socket.
+    //
+    // The test locks in BOTH facts:
+    //   (1) migration was invoked and mutated the in-memory body (proves the
+    //       pipeline works for 204)
+    //   (2) the client receives 204 with an empty body (proves Node strips)
+    //
+    // For real production use, consumers who want a per-version BODY shape
+    // to actually arrive at the client should use statusCode: 200 instead
+    // of 204. Stripe's DELETE /v1/customers/cus_xxx follows this pattern —
+    // it returns 200 with { id, object, deleted } rather than 204.
+
+    const DeletedResource = z
+      .object({
+        response: z
+          .object({
+            deleted: z.boolean(),
+            deleted_at: z.string(),
+            deleted_by: z.string(),
+          })
+          .optional(),
+        deleted: z.boolean().optional(),
+      })
+      .named("Issue204_DeletedResource");
+
+    const transformSpy = vi.fn((res: ResponseInfo) => {
+      if (res.body && typeof res.body === "object" && res.body.response) {
+        const inner = res.body.response as { deleted: boolean };
+        res.body = { deleted: inner.deleted };
+      }
+    });
+
+    class FlattenDeleteEnvelope extends VersionChange {
+      description =
+        "v1 returned a flat { deleted }; v2 wraps in .response with audit metadata";
+      instructions = [];
+
+      r1 = convertResponseToPreviousVersionFor(DeletedResource)(transformSpy);
+    }
+
+    const router = new VersionedRouter();
+    router.delete(
+      "/users/:id",
+      null,
+      DeletedResource,
+      async () => ({
+        response: {
+          deleted: true,
+          deleted_at: "2026-04-16T12:00:00Z",
+          deleted_by: "admin:42",
+        },
+      }),
+      { statusCode: 204 },
+    );
+
+    const app = new Tsadwyn({
+      versions: new VersionBundle(
+        new Version("2025-01-01", FlattenDeleteEnvelope),
+        new Version("2024-01-01"),
+      ),
+    });
+    app.generateAndIncludeVersionedRouters(router);
+
+    // Legacy client — migration IS invoked on the body.
+    const legacyRes = await request(app.expressApp)
+      .delete("/users/u_123")
+      .set("x-api-version", "2024-01-01");
+
+    expect(legacyRes.status).toBe(204);
+    expect(transformSpy).toHaveBeenCalledOnce();
+    // Node strips the body at the wire level for 204 — the client sees empty.
+    expect(legacyRes.text).toBe("");
+
+    // Head client — no migration runs, but same wire-level body strip.
+    transformSpy.mockClear();
+    const headRes = await request(app.expressApp)
+      .delete("/users/u_123")
+      .set("x-api-version", "2025-01-01");
+
+    expect(headRes.status).toBe(204);
+    expect(transformSpy).not.toHaveBeenCalled();
+    expect(headRes.text).toBe("");
+  });
+
+  it("the SAME versioning shape with statusCode: 200 delivers the migrated body to the client (recommended pattern)", async () => {
+    // Same API-evolution scenario as the 204 test above, but at 200 —
+    // here the bodies actually arrive. This is the Stripe-idiomatic pattern
+    // for 'resource deleted with envelope' endpoints.
+    const DeletedResource = z
+      .object({
+        response: z
+          .object({
+            deleted: z.boolean(),
+            deleted_at: z.string(),
+            deleted_by: z.string(),
+          })
+          .optional(),
+        deleted: z.boolean().optional(),
+      })
+      .named("Issue204_DeletedResource_200");
+
+    class FlattenDeleteEnvelope extends VersionChange {
+      description = "v1 flat, v2 nested";
+      instructions = [];
+
+      r1 = convertResponseToPreviousVersionFor(DeletedResource)(
+        (res: ResponseInfo) => {
+          if (res.body && typeof res.body === "object" && res.body.response) {
+            const inner = res.body.response as { deleted: boolean };
+            res.body = { deleted: inner.deleted };
+          }
+        },
+      );
+    }
+
+    const router = new VersionedRouter();
+    router.delete(
+      "/resources/:id",
+      null,
+      DeletedResource,
+      async () => ({
+        response: {
+          deleted: true,
+          deleted_at: "2026-04-16T12:00:00Z",
+          deleted_by: "admin:42",
+        },
+      }),
+      // statusCode: 200 (default) — bodies arrive on the wire
+    );
+
+    const app = new Tsadwyn({
+      versions: new VersionBundle(
+        new Version("2025-01-01", FlattenDeleteEnvelope),
+        new Version("2024-01-01"),
+      ),
+    });
+    app.generateAndIncludeVersionedRouters(router);
+
+    const legacyRes = await request(app.expressApp)
+      .delete("/resources/u_123")
+      .set("x-api-version", "2024-01-01");
+    expect(legacyRes.status).toBe(200);
+    expect(legacyRes.body).toEqual({ deleted: true });
+
+    const headRes = await request(app.expressApp)
+      .delete("/resources/u_123")
+      .set("x-api-version", "2025-01-01");
+    expect(headRes.status).toBe(200);
+    expect(headRes.body).toEqual({
+      response: {
+        deleted: true,
+        deleted_at: "2026-04-16T12:00:00Z",
+        deleted_by: "admin:42",
+      },
+    });
+  });
+
   it("still respects migrateHttpErrors on a 204 route that throws HttpError", async () => {
     // A 204 route's success path has no body, but error paths have JSON bodies
     // and migrateHttpErrors still applies — short-circuit is only for successes.
