@@ -34,6 +34,23 @@ export interface PerClientDefaultVersionOptions {
   };
   /** Enables the stale-pin check. When omitted, the check is skipped. */
   supportedVersions?: readonly string[];
+  /**
+   * Persist the client's pin. Required when `pinOnFirstResolve: true`.
+   * Called with (clientId, version) — tsadwyn doesn't know your storage.
+   */
+  saveVersion?: (clientId: string, version: string) => void | Promise<void>;
+  /**
+   * Stripe-style "pin-on-first-call" semantic: when an authenticated
+   * client has no stored pin, save `fallback` as their pin (via
+   * `saveVersion`) BEFORE returning it. Subsequent calls read the
+   * stored pin and behave identically to any other pinned client.
+   *
+   * Requires `saveVersion` to be supplied. Default: false.
+   *
+   * Does NOT overwrite existing stored pins (including stale ones —
+   * those flow through the `onStalePin` policy instead).
+   */
+  pinOnFirstResolve?: boolean;
 }
 
 /**
@@ -42,6 +59,13 @@ export interface PerClientDefaultVersionOptions {
 export function perClientDefaultVersion(
   opts: PerClientDefaultVersionOptions,
 ): (req: Request) => Promise<string> {
+  if (opts.pinOnFirstResolve && typeof opts.saveVersion !== "function") {
+    throw new TsadwynStructureError(
+      "perClientDefaultVersion: pinOnFirstResolve requires a saveVersion callback " +
+        "to persist the pin on the client's first authenticated call.",
+    );
+  }
+
   const cacheEnabled = opts.cache !== "none";
   const cache = new WeakMap<Request, Promise<string>>();
 
@@ -56,10 +80,22 @@ export function perClientDefaultVersion(
     }
     const pin = await Promise.resolve(opts.resolvePin(clientId));
     if (pin === null || pin === undefined) {
-      opts.logger?.warn(
-        { clientId, reason: "no-stored-pin" },
-        `No stored pin for client "${clientId}"; using fallback.`,
-      );
+      // Stripe-style pin-on-first-call: persist the fallback as the
+      // client's pin so subsequent calls find it in storage. Only
+      // triggers on genuinely unpinned clients (stored = null) —
+      // stale stored pins are handled via onStalePin below.
+      if (opts.pinOnFirstResolve && opts.saveVersion) {
+        opts.logger?.warn(
+          { clientId, pin: opts.fallback, reason: "pin-on-first-resolve" },
+          `Pinning client "${clientId}" to "${opts.fallback}" on first authenticated call.`,
+        );
+        await Promise.resolve(opts.saveVersion(clientId, opts.fallback));
+      } else {
+        opts.logger?.warn(
+          { clientId, reason: "no-stored-pin" },
+          `No stored pin for client "${clientId}"; using fallback.`,
+        );
+      }
       return opts.fallback;
     }
     if (opts.supportedVersions && !opts.supportedVersions.includes(pin)) {

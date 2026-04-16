@@ -511,10 +511,11 @@ const versioningRoutes = createVersioningRoutes({
     clientPins[accountId] = version;
   },
   supportedVersions: SUPPORTED_VERSIONS,
-  // Match perClientDefaultVersion's fallback below so GET /versioning
-  // reports what tsadwyn would actually use at dispatch: the initial
-  // version (2024-01-15) when no pin is stored.
-  fallback: "2024-01-15",
+  // Match perClientDefaultVersion's fallback so GET /versioning
+  // reports what tsadwyn would actually use at dispatch: latest
+  // (2024-11-01) when no pin is stored — Stripe's "new accounts pin
+  // to current latest" semantic.
+  fallback: SUPPORTED_VERSIONS[0],
   // allowDowngrade: false,   // default
   // allowNoChange:  false,   // default
 });
@@ -530,13 +531,25 @@ const app = new Tsadwyn({
 
   // When a client doesn't send `stripe-version`, fall back to their
   // stored pin. Same identify callback as /versioning so there's one
-  // source of truth per account. onStalePin: 'fallback' means if an
-  // account has a pin we've since dropped from the bundle, tsadwyn
-  // treats them as unpinned and uses `fallback` instead.
+  // source of truth per account.
+  //
+  //   - fallback: SUPPORTED_VERSIONS[0] → latest — matches Stripe's
+  //     "new accounts pin to current latest at signup" semantic.
+  //   - pinOnFirstResolve: true → the first authenticated call from an
+  //     unpinned account SAVES the fallback as their pin via
+  //     saveVersion(). Subsequent calls read the stored pin and
+  //     behave like any pinned account.
+  //   - onStalePin: 'fallback' → if an account has a pin we've since
+  //     dropped from the bundle, tsadwyn uses fallback (without auto-
+  //     overwriting; stale-pin healing is a separate consumer concern).
   apiVersionDefaultValue: perClientDefaultVersion({
     identify: identifyAccount,
     resolvePin: (accountId) => clientPins[accountId] ?? null,
-    fallback: "2024-01-15",
+    saveVersion: (accountId, version) => {
+      clientPins[accountId] = version;
+    },
+    fallback: SUPPORTED_VERSIONS[0],  // latest
+    pinOnFirstResolve: true,
     supportedVersions: SUPPORTED_VERSIONS,
     onStalePin: "fallback",
   }),

@@ -245,6 +245,176 @@ describe("Issue: perClientDefaultVersion helper", () => {
     expect(res.body.version).toBe("2024-01-01");
   });
 
+  describe("pinOnFirstResolve — Stripe-style auto-pin on first authenticated call", () => {
+    it("writes fallback as the stored pin the FIRST time an authenticated client has no pin", async () => {
+      const store: Record<string, string> = {};
+      const saveSpy = vi.fn((id: string, v: string) => {
+        store[id] = v;
+      });
+
+      const router = new VersionedRouter();
+      router.get("/whoami", null, null, async () => ({
+        version: apiVersionStorage.getStore(),
+      }));
+
+      const app = new Tsadwyn({
+        versions: new VersionBundle(
+          new Version("2025-06-01"),
+          new Version("2025-01-01"),
+          new Version("2024-01-01"),
+        ),
+        apiVersionDefaultValue: perClientDefaultVersion({
+          identify: (req: any) => req.headers["x-account-id"] ?? null,
+          resolvePin: (id: string) => store[id] ?? null,
+          saveVersion: saveSpy,
+          fallback: "2025-06-01",  // latest — Stripe convention for new accounts
+          pinOnFirstResolve: true,
+          supportedVersions: ["2025-06-01", "2025-01-01", "2024-01-01"],
+        }),
+      } as any);
+      app.generateAndIncludeVersionedRouters(router);
+
+      // First call — no stored pin → fallback is both returned AND persisted.
+      const first = await request(app.expressApp)
+        .get("/whoami")
+        .set("x-account-id", "acct_new");
+      expect(first.body.version).toBe("2025-06-01");
+      expect(saveSpy).toHaveBeenCalledOnce();
+      expect(saveSpy).toHaveBeenCalledWith("acct_new", "2025-06-01");
+      expect(store["acct_new"]).toBe("2025-06-01");
+
+      // Second call — stored pin now exists, no extra saveVersion call.
+      saveSpy.mockClear();
+      const second = await request(app.expressApp)
+        .get("/whoami")
+        .set("x-account-id", "acct_new");
+      expect(second.body.version).toBe("2025-06-01");
+      expect(saveSpy).not.toHaveBeenCalled();
+    });
+
+    it("does NOT auto-pin when identify returns null (unauthenticated)", async () => {
+      const saveSpy = vi.fn();
+
+      const router = new VersionedRouter();
+      router.get("/whoami", null, null, async () => ({ ok: true }));
+
+      const app = new Tsadwyn({
+        versions: new VersionBundle(
+          new Version("2025-06-01"),
+          new Version("2024-01-01"),
+        ),
+        apiVersionDefaultValue: perClientDefaultVersion({
+          identify: () => null,
+          resolvePin: () => null,
+          saveVersion: saveSpy,
+          fallback: "2025-06-01",
+          pinOnFirstResolve: true,
+        }),
+      } as any);
+      app.generateAndIncludeVersionedRouters(router);
+
+      await request(app.expressApp).get("/whoami");
+
+      expect(saveSpy).not.toHaveBeenCalled();
+    });
+
+    it("does NOT overwrite an existing stored pin (even if out-of-bundle)", async () => {
+      const store: Record<string, string> = { acct_old: "2020-01-01" };  // stale
+      const saveSpy = vi.fn((id: string, v: string) => {
+        store[id] = v;
+      });
+
+      const router = new VersionedRouter();
+      router.get("/whoami", null, null, async () => ({
+        version: apiVersionStorage.getStore(),
+      }));
+
+      const app = new Tsadwyn({
+        versions: new VersionBundle(
+          new Version("2025-06-01"),
+          new Version("2024-01-01"),
+        ),
+        apiVersionDefaultValue: perClientDefaultVersion({
+          identify: (req: any) => req.headers["x-account-id"] ?? null,
+          resolvePin: (id: string) => store[id] ?? null,
+          saveVersion: saveSpy,
+          fallback: "2025-06-01",
+          pinOnFirstResolve: true,
+          onStalePin: "fallback",
+          supportedVersions: ["2025-06-01", "2024-01-01"],
+        }),
+      } as any);
+      app.generateAndIncludeVersionedRouters(router);
+
+      await request(app.expressApp)
+        .get("/whoami")
+        .set("x-account-id", "acct_old");
+
+      // Stale-pin handling returned fallback, but we did NOT auto-overwrite.
+      // pinOnFirstResolve is specifically for 'no pin stored yet'.
+      expect(saveSpy).not.toHaveBeenCalled();
+      expect(store["acct_old"]).toBe("2020-01-01");
+    });
+
+    it("pinOnFirstResolve: false (default) means saveVersion is never called", async () => {
+      const saveSpy = vi.fn();
+      const router = new VersionedRouter();
+      router.get("/whoami", null, null, async () => ({ ok: true }));
+
+      const app = new Tsadwyn({
+        versions: new VersionBundle(
+          new Version("2025-06-01"),
+          new Version("2024-01-01"),
+        ),
+        apiVersionDefaultValue: perClientDefaultVersion({
+          identify: () => "acct_x",
+          resolvePin: () => null,
+          saveVersion: saveSpy,
+          fallback: "2025-06-01",
+          // pinOnFirstResolve omitted → default false
+        }),
+      } as any);
+      app.generateAndIncludeVersionedRouters(router);
+
+      await request(app.expressApp).get("/whoami");
+      expect(saveSpy).not.toHaveBeenCalled();
+    });
+
+    it("throws TsadwynStructureError at construction when pinOnFirstResolve: true + saveVersion missing", () => {
+      expect(() =>
+        perClientDefaultVersion({
+          identify: () => "acct_x",
+          resolvePin: () => null,
+          fallback: "2025-06-01",
+          pinOnFirstResolve: true,
+          // saveVersion missing — invalid
+        } as any),
+      ).toThrow();
+    });
+
+    it("saveVersion errors surface as 500 (don't silently lose the request)", async () => {
+      const router = new VersionedRouter();
+      router.get("/whoami", null, null, async () => ({ ok: true }));
+
+      const app = new Tsadwyn({
+        versions: new VersionBundle(new Version("2024-01-01")),
+        apiVersionDefaultValue: perClientDefaultVersion({
+          identify: () => "acct_x",
+          resolvePin: () => null,
+          saveVersion: () => {
+            throw new Error("db unavailable");
+          },
+          fallback: "2024-01-01",
+          pinOnFirstResolve: true,
+        }),
+      } as any);
+      app.generateAndIncludeVersionedRouters(router);
+
+      const res = await request(app.expressApp).get("/whoami");
+      expect(res.status).toBe(500);
+    });
+  });
+
   it("propagates errors from identify/resolvePin as 500 with a specific error code", async () => {
     const router = new VersionedRouter();
     router.get("/whoami", null, null, async () => ({ ok: true }));

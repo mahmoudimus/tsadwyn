@@ -136,7 +136,9 @@ const app = new Tsadwyn({
   apiVersionDefaultValue: perClientDefaultVersion({
     identify:   req => (req as any).user?.accountId ?? null,
     resolvePin: accountId => accountRepo.getApiVersion(accountId),
-    fallback:   '2024-01-15',                  // initial version
+    saveVersion: (accountId, v) => accountRepo.setApiVersion(accountId, v),
+    fallback:   bundle.versionValues[0],       // latest — Stripe's "pin to current latest at signup" model
+    pinOnFirstResolve: true,                   // persist the pin on first authenticated call
     supportedVersions: bundle.versionValues,
     onStalePin: 'fallback',                    // if stored pin isn't in bundle
   }),
@@ -357,7 +359,7 @@ For running examples of both patterns end-to-end, see [`examples/stripe-api.ts`]
 | `versionPickingMiddleware(options)` | Built-in middleware that extracts the version and runs the `apiVersionDefaultValue` resolver |
 | `VersionPickingOptions.onUnsupportedVersion` | `'reject'` (400 with `{error, sent, supported}`) \| `'fallback'` (substitute default + warn) \| `'passthrough'` (default, stores verbatim) |
 | `TsadwynOptions.preVersionPick` | Middleware that runs **before** `versionPickingMiddleware` — the place to put auth so `apiVersionDefaultValue` can read `req.user`. Scoped to versioned dispatch (utility endpoints bypass). |
-| `perClientDefaultVersion(opts)` | Canonical DB-backed default resolver: `identify` extracts client id, `resolvePin` loads their version, `onStalePin` handles bundle evictions. Per-request WeakMap cache. |
+| `perClientDefaultVersion(opts)` | Canonical DB-backed default resolver: `identify` extracts client id, `resolvePin` loads their version, `onStalePin` handles bundle evictions. Per-request WeakMap cache. Optional `pinOnFirstResolve: true` + `saveVersion` implements Stripe's "pin to current latest on the first authenticated call" behavior. |
 
 ### Helpers
 
