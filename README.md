@@ -237,6 +237,106 @@ domain throw  →  errorMapper produces HttpError(status, body)
 
 **The `headerOnly: true` cousin.** Some migrations only mutate `res.headers` (e.g., renaming an `x-rate-limit-*` header across versions). Flag those with `headerOnly: true` — they run on body-less responses (204, 304, HEAD requests, null handler returns) where body-mutating migrations would NPE on `undefined`. `headerOnly` and `migrateHttpErrors` are orthogonal: a migration can set both (runs everywhere) or just `headerOnly` (runs everywhere but only touches headers).
 
+### Versioning behavior changes (not just schemas)
+
+Schema migrations only cover **shape**: fields rename, types change, endpoints appear and disappear. The other half of API versioning is **behavior** — same shape, different side effects, policy, or semantics.
+
+Real examples:
+
+- v1 `POST /charges` captures funds immediately; v2 requires an explicit `/capture` follow-up
+- v1's rate limit is 100 req/s; v2's is 1000 req/s on the same endpoints
+- v1 `DELETE /users/:id` cascades to delete associated posts; v2 soft-deletes only
+- v1 idempotency keys live 24h; v2 live 7 days
+- v1 webhooks retry 3×; v2 retries 5× with exponential backoff
+
+None of these show up in the request/response body — the shape is identical across versions. The difference is what the handler (or surrounding infrastructure) *does*. Your handlers need to branch on the caller's pinned version — but hard-coding `apiVersionStorage.getStore()` checks in every handler is the same sprawl pattern versioning was supposed to avoid.
+
+tsadwyn ships two primitives for centralizing those branches. Use whichever matches the shape of the behavior change.
+
+#### Pattern 1: `VersionChangeWithSideEffects.isApplied` — boolean toggles
+
+Good for **on/off** behavior changes. A `VersionChangeWithSideEffects` subclass is a lint-trackable marker: the class is bound to a version, carries a description (so it lands in the changelog automatically), and exposes a static `isApplied` getter that returns true when the current request's version is at-or-newer-than the bound version.
+
+```ts
+import { VersionChangeWithSideEffects, VersionBundle, Version } from 'tsadwyn';
+
+class SoftDeleteUsers extends VersionChangeWithSideEffects {
+  description = "v2 soft-deletes users instead of cascading delete";
+  instructions = [];  // pure behavior change — no schema instructions
+}
+
+const versions = new VersionBundle(
+  new Version('2025-01-01', SoftDeleteUsers),
+  new Version('2024-01-01'),
+);
+
+// Handler reads isApplied, not the raw version string:
+router.delete('/users/:id', null, null, async (req) => {
+  if (SoftDeleteUsers.isApplied) {
+    await userRepo.softDelete(req.params.id);
+  } else {
+    await userRepo.deleteWithCascade(req.params.id);
+  }
+  return undefined;
+});
+```
+
+**Why this over `if (apiVersionStorage.getStore() === '2025-01-01')`:**
+
+- The comparison is **named and centralized**: one place in your codebase says "SoftDeleteUsers is the change at 2025-01-01," and every handler just asks `SoftDeleteUsers.isApplied`. Rename the version, don't touch the handlers.
+- The change auto-documents: `description` lands in the changelog endpoint + generated OpenAPI.
+- It's lint-grep-able: `git grep VersionChangeWithSideEffects` surfaces every behavior-level change at once.
+- The `isApplied` getter enforces the "at-or-newer-than" semantic correctly — you don't hand-roll date comparisons per handler.
+
+#### Pattern 2: `buildBehaviorResolver(map, fallback)` — map version → value
+
+Good for **configurable values** that differ per version: rate limits, timeouts, retry counts, feature flags, field defaults. One resolver, many callsites, zero scattered comparisons.
+
+```ts
+import { buildBehaviorResolver } from 'tsadwyn';
+
+// Define the map once, close to the other versioning concerns.
+const getRateLimit = buildBehaviorResolver(
+  new Map([
+    ['2025-01-01', { perSecond: 1000, burst: 2000 }],
+    ['2024-06-01', { perSecond: 500,  burst: 1000 }],
+    ['2024-01-01', { perSecond: 100,  burst:  200 }],
+  ]),
+  { perSecond: 1000, burst: 2000 },  // fallback when version is unknown/absent
+  { onUnknown: 'warn-once', logger: pinoLogger },  // optional telemetry
+);
+
+// Handlers and middleware read a value, never a version string:
+router.use((req, res, next) => {
+  const limit = getRateLimit();           // reads apiVersionStorage, returns the right config
+  enforceRateLimit(req, limit);
+  next();
+});
+
+router.post('/bulk-import', ..., async (req) => {
+  const { burst } = getRateLimit();        // same resolver, different callsite
+  // ...
+});
+```
+
+**When `buildBehaviorResolver` beats `isApplied`:**
+
+- The behavior has **more than two states** — e.g., three different rate limits across three versions
+- You want to surface the per-version values in docs / admin UIs (`Object.fromEntries(map)` gives you the snapshot)
+- A future version might want to introduce a new tier without touching every caller
+
+**`onUnknown` telemetry** (`'silent'` / `'warn-once'` / `'warn-every'`) gives you a signal when a request shows up with a version the map doesn't know about — usually a typo'd header or a stale pin. The resolver returns `fallback` so the request still completes while the log alerts you.
+
+#### Which to reach for
+
+| Shape of the change | Reach for |
+|---|---|
+| One thing on; one thing off — "v2 does X differently" | `VersionChangeWithSideEffects.isApplied` |
+| A value that changes per version (int, config object, feature flags) | `buildBehaviorResolver` |
+| A behavior change that ALSO changes the wire shape | A regular `VersionChange` with migrations + `isApplied` in the handler |
+
+Both primitives read from the same `apiVersionStorage` the request-dispatch pipeline writes — so whichever version a client resolved to (explicit header, `perClientDefaultVersion`, fallback) is what the behavior branches see. No extra wiring.
+
 ### Upgrade semantics — the `/versioning` resource (optional)
 
 tsadwyn ships a pre-wired RESTful `/versioning` resource so consumers don't have to hand-roll the upgrade endpoint. It's **fully opt-in** — you don't have to mount it at all, and you don't have to use it if you do. If your API doesn't expose self-service upgrades (clients pin via an admin ticket, their signup config, etc.) just skip this section.
