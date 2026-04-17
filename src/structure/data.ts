@@ -335,12 +335,15 @@ export function convertResponseToPreviousVersionFor(
     const path = pathOrFirstSchema;
     const methods = new Set(methodsOrSecondSchema.map((m: string) => m.toUpperCase()));
 
-    // Check for options in rest
-    let migrateHttpErrors = false;
+    // Check for options in rest. Default: TRUE — response migrations apply
+    // to error responses by default, matching Stripe's versioning semantics.
+    // Pass { migrateHttpErrors: false } to opt out for migrations that only
+    // touch success-response shapes.
+    let migrateHttpErrors = true;
     let headerOnly = false;
     for (const arg of rest) {
       if (arg && typeof arg === "object" && "migrateHttpErrors" in arg) {
-        migrateHttpErrors = arg.migrateHttpErrors ?? false;
+        migrateHttpErrors = arg.migrateHttpErrors ?? true;
       }
       if (arg && typeof arg === "object" && "headerOnly" in arg) {
         headerOnly = arg.headerOnly ?? false;
@@ -404,7 +407,12 @@ export function convertResponseToPreviousVersionFor(
     }
   }
 
-  const migrateHttpErrors = options.migrateHttpErrors !== undefined ? options.migrateHttpErrors : false;
+  // Default: TRUE — response migrations apply to error responses by default.
+  // Stripe-style versioning: error envelopes drift across versions and clients
+  // pinned to older versions see their version's error shape. Pass
+  // { migrateHttpErrors: false } for migrations that should only affect
+  // success-response bodies.
+  const migrateHttpErrors = options.migrateHttpErrors !== undefined ? options.migrateHttpErrors : true;
   const checkUsage = options.checkUsage !== undefined ? options.checkUsage : true;
   const headerOnly = options.headerOnly ?? false;
 

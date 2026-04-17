@@ -324,13 +324,13 @@ describe("Section 7: convertResponseToPreviousVersionFor", () => {
     expect(instruction.methodName).toBe("resXform");
   });
 
-  it("path-based without options — migrateHttpErrors defaults to false", () => {
+  it("path-based without options — migrateHttpErrors defaults to true (Stripe semantics)", () => {
     const i: any = convertResponseToPreviousVersionFor("/x", ["GET"])(
       (res: ResponseInfo) => {
         void res;
       },
     );
-    expect(i.migrateHttpErrors).toBe(false);
+    expect(i.migrateHttpErrors).toBe(true);
   });
 
   it("path-based throws for invalid HTTP method", () => {
@@ -375,12 +375,12 @@ describe("Section 7: convertResponseToPreviousVersionFor", () => {
     expect(i.checkUsage).toBe(false);
   });
 
-  it("schema-based default options — migrateHttpErrors=false, checkUsage=true", () => {
+  it("schema-based default options — migrateHttpErrors=true, checkUsage=true", () => {
     const S = z.object({ v: z.string() }).named(uniq("ResDefaults"));
     const i: any = convertResponseToPreviousVersionFor(S)((res: ResponseInfo) => {
       void res;
     });
-    expect(i.migrateHttpErrors).toBe(false);
+    expect(i.migrateHttpErrors).toBe(true);
     expect(i.checkUsage).toBe(true);
   });
 

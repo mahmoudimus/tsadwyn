@@ -217,10 +217,13 @@ describe("Issue: inspectMigrationChain()", () => {
     }
 
     class SuccessMig extends VersionChange {
-      description = "success-only migration";
+      description = "success-only migration (opts out of error responses)";
       instructions = [];
 
-      migrate = convertResponseToPreviousVersionFor(Order)(
+      // Default is migrateHttpErrors: true now. Opt out so this migration
+      // is a clean 'success-only' example for the includeErrorMigrations
+      // filter test.
+      migrate = convertResponseToPreviousVersionFor(Order, { migrateHttpErrors: false })(
         (_res: ResponseInfo) => {},
       );
     }

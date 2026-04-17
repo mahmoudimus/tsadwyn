@@ -185,38 +185,57 @@ For the common cases, `onStalePin: 'fallback'` + pino-style warn telemetry is us
 
 ### Versioning error responses
 
-Error responses (4xx / 5xx) **bypass response migrations by default**. A migration opts into running on error paths per-migration via `migrateHttpErrors: true`:
+Error responses (4xx / 5xx) **run response migrations by default** — tsadwyn's version-pin contract applies to error envelopes just as it does to successful responses, matching Stripe's actual behavior. An `errorMapper`-produced `HttpError` or a handler-thrown `HttpError` or an auto-generated `ValidationError` all flow through the same pipeline:
 
 ```ts
 class AddErrorCode extends VersionChange {
   description = "v2 adds `code` to error bodies; v1 clients get just `message`";
   instructions = [];
 
-  migrate = convertResponseToPreviousVersionFor(MySchema, {
-    migrateHttpErrors: true,       // ← opt in to running on errors
-  })((res: ResponseInfo) => {
-    if (res.body?.code !== undefined) {
-      delete res.body.code;         // legacy clients don't have the field
-    }
-  });
+  // Default migrateHttpErrors: true — migration fires on 4xx/5xx bodies too.
+  migrate = convertResponseToPreviousVersionFor(MyErrorEnvelope)(
+    (res: ResponseInfo) => {
+      if (res.body?.code !== undefined) {
+        delete res.body.code;         // legacy clients don't have the field
+      }
+    },
+  );
 }
 ```
 
-**Why it's opt-in** (rather than running on errors by default): many APIs intentionally keep their error envelope stable across versions so clients can centralize error-handling logic without per-version branches. If error migrations ran automatically, that promise would quietly break the first time a consumer added a new field to their error body.
+**Defensive pattern.** Since a schema-targeted migration can now fire on error bodies whose shape may NOT match the schema (e.g., a `UserResource`-targeted migration running against `{detail: [...]}` validation envelope), migrations should null-check the fields they touch:
 
-**What you need if your error envelope actually does change per version** (Stripe's pattern — `type`/`code`/nesting drifted across their version history): flip `migrateHttpErrors: true` on the specific migrations that reshape error bodies. Successful-response migrations with the flag unset stay unaffected.
+```ts
+migrate = convertResponseToPreviousVersionFor(UserResource)(
+  (res: ResponseInfo) => {
+    if (res.body?.addresses) {        // ← null-check the field before mutating
+      res.body.address = res.body.addresses[0];
+      delete res.body.addresses;
+    }
+  },
+);
+```
 
-**Interaction with `errorMapper`.** When a consumer throws a domain exception and `errorMapper` translates it into an `HttpError`, that `HttpError` enters the response-migration pipeline:
+**Opting out per-migration** — `{migrateHttpErrors: false}` when a migration should only apply to success-response bodies:
+
+```ts
+convertResponseToPreviousVersionFor(UserResource, { migrateHttpErrors: false })(
+  transformer,   // runs on 2xx only — skips every 4xx/5xx
+);
+```
+
+**Interaction with `errorMapper`.** Domain exceptions translated by `errorMapper` enter the same pipeline:
 
 ```
 domain throw  →  errorMapper produces HttpError(status, body)
-             →  migrations with migrateHttpErrors: true apply to body
+             →  response migrations apply to body (default: all of them,
+                unless they pass migrateHttpErrors: false)
              →  client receives the version-migrated error envelope
 ```
 
-So `errorMapper` defines the **head-shape** error body; the `migrateHttpErrors` response migrations down-shift that body for each client's pin. `ValidationError` (thrown automatically on Zod validation failures) flows through the exact same pipeline — consumers can reshape validation-error envelopes via either mechanism.
+`errorMapper` defines the **head-shape** error body; the response migrations down-shift that body for each client's pin. `ValidationError` (thrown automatically on Zod validation failures) flows through the exact same pipeline — consumers can reshape validation-error envelopes via either mechanism.
 
-**The `headerOnly: true` cousin.** Some migrations only mutate `res.headers` (e.g., renaming an `x-rate-limit-*` header across versions). Flag those with `headerOnly: true` — they run on body-less responses (204, 304, HEAD requests, null handler returns) where body-mutating migrations would otherwise be skipped.
+**The `headerOnly: true` cousin.** Some migrations only mutate `res.headers` (e.g., renaming an `x-rate-limit-*` header across versions). Flag those with `headerOnly: true` — they run on body-less responses (204, 304, HEAD requests, null handler returns) where body-mutating migrations would NPE on `undefined`. `headerOnly` and `migrateHttpErrors` are orthogonal: a migration can set both (runs everywhere) or just `headerOnly` (runs everywhere but only touches headers).
 
 ### Upgrade semantics — the `/versioning` resource (optional)
 

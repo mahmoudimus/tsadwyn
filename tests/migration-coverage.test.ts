@@ -734,8 +734,9 @@ describe("Section 5: HTTP error migration", () => {
     class Change extends VersionChange {
       description = "should not run on error bodies";
       instructions: any[] = [];
-      // Defaults to migrateHttpErrors: false
-      migrateRes = convertResponseToPreviousVersionFor(R)(
+      // Default is TRUE now (Stripe semantics). Opt out explicitly to
+      // preserve the success-only scope this test is asserting.
+      migrateRes = convertResponseToPreviousVersionFor(R, { migrateHttpErrors: false })(
         (res: ResponseInfo) => {
           if (res.body && typeof res.body === "object") {
             res.body.should_not_appear = true;

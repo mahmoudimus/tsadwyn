@@ -148,7 +148,9 @@ describe("Issue: HEAD request support", () => {
       description = "add x-legacy-header for legacy clients";
       instructions = [];
 
-      r1 = convertResponseToPreviousVersionFor(UserSchema, { migrateHttpErrors: true })(
+      // headerOnly: true signals the migration only touches res.headers —
+      // safe to run on body-less contexts (HEAD, 204/304, null-result).
+      r1 = convertResponseToPreviousVersionFor(UserSchema, { headerOnly: true })(
         headerTransformSpy,
       );
     }

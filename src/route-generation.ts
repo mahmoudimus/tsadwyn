@@ -1297,7 +1297,11 @@ function createVersionedHandler(
       if (isNullResult && !isHead) {
         const responseInfo = new ResponseInfo(undefined, successStatus);
         for (const migration of responseMigrations) {
-          if (!migration.headerOnly && !migration.migrateHttpErrors) {
+          // Body-less contexts (204, 304, null handler return): only
+          // headerOnly migrations run — body-mutating transformers would
+          // NPE on `undefined`. `migrateHttpErrors` is about error vs
+          // success responses, orthogonal to body-presence.
+          if (!migration.headerOnly) {
             continue;
           }
           migration.transformer(responseInfo);
@@ -1335,11 +1339,17 @@ function createVersionedHandler(
           successStatus,
         );
         for (const migration of responseMigrations) {
-          // T-401: Skip response migration if status >= 300 and migrateHttpErrors is false.
-          // HEAD is treated like a body-less response — same skip semantics
-          // (only migrateHttpErrors-flagged or headerOnly migrations run).
+          // HEAD: the wire-level body is stripped. Only headerOnly
+          // migrations run (body-mutating transformers are dead code).
+          if (isHead && !migration.headerOnly) {
+            continue;
+          }
+          // 3xx/4xx/5xx: body-mutating migrations only fire when the
+          // migration has opted into error-response migration via
+          // `migrateHttpErrors: true` (default TRUE — matches Stripe).
+          // headerOnly migrations always run regardless of status.
           if (
-            (isHead || responseInfo.statusCode >= 300) &&
+            responseInfo.statusCode >= 300 &&
             !migration.migrateHttpErrors &&
             !migration.headerOnly
           ) {
