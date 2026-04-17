@@ -119,6 +119,14 @@ export {
 export { buildBehaviorResolver } from "./behavior-resolver.js";
 export type { BuildBehaviorResolverOptions } from "./behavior-resolver.js";
 
+// Typed overlay primitive — declarative behavior catalog built from HEAD + deltas
+export { createVersionedBehavior } from "./versioned-behavior.js";
+export type {
+  CreateVersionedBehaviorOptions,
+  VersionBehaviorChange,
+  VersionedBehavior,
+} from "./versioned-behavior.js";
+
 // Canonical upgrade-policy helper for /versioning/upgrade endpoints
 export { validateVersionUpgrade } from "./version-upgrade.js";
 export type {
