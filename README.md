@@ -183,6 +183,41 @@ Three modes + a structured log surface. When you decide to actually heal, you do
 
 For the common cases, `onStalePin: 'fallback'` + pino-style warn telemetry is usually enough: stale accounts keep getting served something reasonable, alerts page on-call when the warn rate is non-zero, the team investigates before reaching for the overwrite.
 
+### Versioning error responses
+
+Error responses (4xx / 5xx) **bypass response migrations by default**. A migration opts into running on error paths per-migration via `migrateHttpErrors: true`:
+
+```ts
+class AddErrorCode extends VersionChange {
+  description = "v2 adds `code` to error bodies; v1 clients get just `message`";
+  instructions = [];
+
+  migrate = convertResponseToPreviousVersionFor(MySchema, {
+    migrateHttpErrors: true,       // ← opt in to running on errors
+  })((res: ResponseInfo) => {
+    if (res.body?.code !== undefined) {
+      delete res.body.code;         // legacy clients don't have the field
+    }
+  });
+}
+```
+
+**Why it's opt-in** (rather than running on errors by default): many APIs intentionally keep their error envelope stable across versions so clients can centralize error-handling logic without per-version branches. If error migrations ran automatically, that promise would quietly break the first time a consumer added a new field to their error body.
+
+**What you need if your error envelope actually does change per version** (Stripe's pattern — `type`/`code`/nesting drifted across their version history): flip `migrateHttpErrors: true` on the specific migrations that reshape error bodies. Successful-response migrations with the flag unset stay unaffected.
+
+**Interaction with `errorMapper`.** When a consumer throws a domain exception and `errorMapper` translates it into an `HttpError`, that `HttpError` enters the response-migration pipeline:
+
+```
+domain throw  →  errorMapper produces HttpError(status, body)
+             →  migrations with migrateHttpErrors: true apply to body
+             →  client receives the version-migrated error envelope
+```
+
+So `errorMapper` defines the **head-shape** error body; the `migrateHttpErrors` response migrations down-shift that body for each client's pin. `ValidationError` (thrown automatically on Zod validation failures) flows through the exact same pipeline — consumers can reshape validation-error envelopes via either mechanism.
+
+**The `headerOnly: true` cousin.** Some migrations only mutate `res.headers` (e.g., renaming an `x-rate-limit-*` header across versions). Flag those with `headerOnly: true` — they run on body-less responses (204, 304, HEAD requests, null handler returns) where body-mutating migrations would otherwise be skipped.
+
 ### Upgrade semantics — the `/versioning` resource (optional)
 
 tsadwyn ships a pre-wired RESTful `/versioning` resource so consumers don't have to hand-roll the upgrade endpoint. It's **fully opt-in** — you don't have to mount it at all, and you don't have to use it if you do. If your API doesn't expose self-service upgrades (clients pin via an admin ticket, their signup config, etc.) just skip this section.
