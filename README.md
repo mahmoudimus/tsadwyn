@@ -151,6 +151,38 @@ const app = new Tsadwyn({
 
 An explicit `x-api-version` header always wins over the resolver — useful for staging, per-request overrides, and admin tooling.
 
+### Stale pins — what they are, and why tsadwyn doesn't auto-heal them
+
+A **stale pin** is a stored pin value that points at a version no longer in the current `VersionBundle`. The pin was written at some point, persisted, and is now orphaned because the bundle has evolved out from under it. This happens in four realistic scenarios:
+
+1. **Version retirement.** The team sunsets `2024-01-15` — removes it from the `VersionBundle`, deploys the new build. Every account still pinned to `"2024-01-15"` is stale until they upgrade. Stripe themselves retire old versions eventually.
+2. **Data seed / backfill drift.** An ops migration imports accounts from a legacy system with pin strings that don't match the current bundle — typos (`2024-1-15`), old formats (`v3` vs `2024-01-15`), or values from a different environment. Surfaces the first time those accounts make a call.
+3. **Cross-environment pin drift.** Staging has `2025-06-01` in the bundle; production doesn't yet. A pin written in staging gets promoted to production and is stale until the production bundle catches up.
+4. **Rollback.** Production deployed `2025-06-01`, accounts pinned to it (explicitly via `/versioning` or implicitly via `pinOnFirstResolve`). A regression was found, the team rolled back to a build without `2025-06-01`. All those accounts are now stale.
+
+**Why tsadwyn doesn't auto-heal** (silently overwrite stale pins with the fallback):
+
+- **Typos are bugs, not fixes.** If the stale pin is `2024-1-15` (missing a zero-pad), silently coercing to fallback hides the bug forever — the operator never finds out the source of the corruption and the wrong value gets normalized in.
+- **Retirement-with-coercion violates the versioning contract.** A client who was explicitly pinned to `2024-01-15` made integration decisions based on that contract. Silently moving them to fallback means they wake up with responses they didn't sign up for.
+- **Most consumers want to notice.** Operators generally want stale-pin events to page someone for investigation, not auto-silent-fixed. That's why the default is `onStalePin: 'fallback'` with a **warn** (via the logger) rather than an overwrite.
+- **Healing is a consumer concern.** When you actually want to rewrite stale pins (e.g., you just retired v1 and want every v1 client upgraded to v2 next time they log in), that's a policy decision with business-specific rules. Do it in your own middleware or a scheduled task — with audit logging — not as a side-effect of a framework's default path.
+
+**What tsadwyn does give you** via `perClientDefaultVersion.onStalePin`:
+
+```ts
+perClientDefaultVersion({
+  // ...
+  onStalePin: 'fallback',    // (default) use fallback + emit warn — SAFE, observable
+  // onStalePin: 'passthrough',  // store the stale string; downstream picker decides
+  // onStalePin: 'reject',       // throw — surfaces immediately as 500 (great in dev/CI)
+  logger: pinoLogger,        // warns include { pin, clientId, supportedVersions }
+});
+```
+
+Three modes + a structured log surface. When you decide to actually heal, you do it deliberately — a scheduled task that calls `saveVersion(clientId, targetVersion)` with whatever logic you want (upgrade to next-supported, force-pin to latest, flag the account for manual review, etc.). tsadwyn stays out of the write path.
+
+For the common cases, `onStalePin: 'fallback'` + pino-style warn telemetry is usually enough: stale accounts keep getting served something reasonable, alerts page on-call when the warn rate is non-zero, the team investigates before reaching for the overwrite.
+
 ### Upgrade semantics — the `/versioning` resource (optional)
 
 tsadwyn ships a pre-wired RESTful `/versioning` resource so consumers don't have to hand-roll the upgrade endpoint. It's **fully opt-in** — you don't have to mount it at all, and you don't have to use it if you do. If your API doesn't expose self-service upgrades (clients pin via an admin ticket, their signup config, etc.) just skip this section.
