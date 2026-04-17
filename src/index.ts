@@ -107,6 +107,13 @@ export { migrateResponseBody } from "./migrate.js";
 export { perClientDefaultVersion } from "./per-client-default.js";
 export type { PerClientDefaultVersionOptions } from "./per-client-default.js";
 
+// Cached variant: TTL'd map + invalidation handles for the upgrade endpoint
+export { cachedPerClientDefaultVersion } from "./cached-per-client-default.js";
+export type {
+  CachedPerClientDefaultVersionOptions,
+  CachedPerClientDefaultVersion,
+} from "./cached-per-client-default.js";
+
 // Request-scoped access to the raw Express Request inside tsadwyn handlers
 // (captures middleware-injected state that the stripped handler view hides)
 export {
