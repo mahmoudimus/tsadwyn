@@ -20,6 +20,12 @@ import { ZodSchemaRegistry, generateVersionedSchemas } from "./schema-generation
 import { renderDocsDashboard, renderSwaggerUI, renderRedocUI, DEFAULT_ASSET_URLS } from "./docs.js";
 import type { DocsAssetUrls } from "./docs.js";
 import { RootTsadwynRouter } from "./routing.js";
+import {
+  detectRouteShadows,
+  reportRouteShadows,
+  type RouteShadowingPolicy,
+  type RouteShadowingLogger,
+} from "./route-shadowing.js";
 
 /**
  * Regex for validating ISO date strings (YYYY-MM-DD).
@@ -171,6 +177,24 @@ export interface TsadwynOptions {
    * Pairs with `exceptionMap()` for a declarative, introspectable map form.
    */
   errorMapper?: (err: unknown) => import("./exceptions.js").HttpError | null;
+
+  /**
+   * Policy applied when a parameterized route (e.g. `/users/:id`) is
+   * registered before a literal route it would shadow (e.g. `/users/search`).
+   * path-to-regexp is first-match-wins, so the literal path never receives
+   * traffic — an easy and costly production bug.
+   *
+   *   - `'warn'` (default) — emit one log line per shadow via
+   *                          `routeShadowingLogger` or `console.warn`.
+   *   - `'throw'`          — surface as `TsadwynStructureError` during
+   *                          `generateAndIncludeVersionedRouters()`. Best
+   *                          for CI enforcement on new apps.
+   *   - `'silent'`         — suppress the diagnostic entirely.
+   */
+  onRouteShadowing?: RouteShadowingPolicy;
+
+  /** Structured logger used for route-shadowing warns. */
+  routeShadowingLogger?: RouteShadowingLogger;
 }
 
 /**
@@ -255,6 +279,16 @@ export class Tsadwyn {
   _errorMapper: ((err: unknown) => import("./exceptions.js").HttpError | null) | null;
 
   /**
+   * Policy for shadowed-route diagnostic:
+   *   - 'warn' (default): emit one log line per shadow via `routeShadowingLogger` or console.warn
+   *   - 'throw': refuse to initialize; `TsadwynStructureError` is thrown
+   *   - 'silent': no-op (suppress all shadow reporting)
+   */
+  _onRouteShadowing: RouteShadowingPolicy;
+  /** Structured logger for route-shadowing warns. Ignored when policy !== 'warn'. */
+  _routeShadowingLogger: RouteShadowingLogger | undefined;
+
+  /**
    * Access the internal versioned routers map.
    * Used by the CLI and for introspection.
    */
@@ -304,6 +338,10 @@ export class Tsadwyn {
 
     // Error mapper (domain exceptions → HttpError inside handler catch blocks)
     this._errorMapper = options.errorMapper ?? null;
+
+    // Route-shadowing diagnostic policy (default: warn)
+    this._onRouteShadowing = options.onRouteShadowing ?? "warn";
+    this._routeShadowingLogger = options.routeShadowingLogger;
 
     // T-1003: Validate version format and ordering
     this._validateVersionFormat();
@@ -587,6 +625,11 @@ export class Tsadwyn {
 
     // Store routes for OpenAPI generation
     this._routes = mergedRouter.routes;
+
+    // Scan for route-shadowing before binding — catches :id-then-literal
+    // mistakes while the user can still see them. Policy governs severity.
+    const shadows = detectRouteShadows(mergedRouter.routes);
+    reportRouteShadows(shadows, this._onRouteShadowing, this._routeShadowingLogger);
 
     const generatedRouters = generateVersionedRouters(
       mergedRouter,

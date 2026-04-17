@@ -134,6 +134,14 @@ export type {
   VersionedBehavior,
 } from "./versioned-behavior.js";
 
+// Route-shadowing detector (exposed for CLI tools and advanced callers)
+export { detectRouteShadows, reportRouteShadows } from "./route-shadowing.js";
+export type {
+  RouteShadowingPolicy,
+  RouteShadowingLogger,
+  RouteShadow,
+} from "./route-shadowing.js";
+
 // Canonical upgrade-policy helper for /versioning/upgrade endpoints
 export { validateVersionUpgrade } from "./version-upgrade.js";
 export type {
