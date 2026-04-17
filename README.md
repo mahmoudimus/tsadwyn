@@ -151,6 +151,50 @@ const app = new Tsadwyn({
 
 An explicit `x-api-version` header always wins over the resolver — useful for staging, per-request overrides, and admin tooling.
 
+### High-traffic caching — `cachedPerClientDefaultVersion`
+
+`perClientDefaultVersion` calls `resolvePin` on **every** authenticated request that doesn't send an explicit version header. For a modest API that's fine — it's one indexed lookup per request, and you were probably going to touch the DB anyway. For a high-QPS API (or one where the pin lives in a slow upstream service), that call goes from "cheap" to "dominant cost." `cachedPerClientDefaultVersion` is the same resolver with a cross-request cache layered on top, plus the invalidation machinery you need to keep the cache honest.
+
+```ts
+import { cachedPerClientDefaultVersion } from 'tsadwyn';
+
+const { resolver, invalidate, invalidateAll } = cachedPerClientDefaultVersion({
+  identify:    req => (req as any).user?.accountId ?? null,
+  resolvePin:  accountId => accountRepo.getApiVersion(accountId),
+  fallback:    bundle.versionValues[0],
+  supportedVersions: bundle.versionValues,
+  ttlMs:       5 * 60 * 1000,     // default — cap on how stale one pod's view can be
+  // pinOnFirstResolve + saveVersion are both supported; the newly persisted pin
+  // is written to the cache, so the second request skips storage entirely.
+});
+
+const app = new Tsadwyn({ versions, apiVersionDefaultValue: resolver });
+```
+
+**Three things it gives you that the uncached form doesn't:**
+
+1. **Amortized reads.** The first request for a client goes to storage; subsequent requests within `ttlMs` return from the in-memory map. The cache key is whatever `identify(req)` returns — most people key on `user.accountId` or an equivalent stable id.
+
+2. **Single-flight concurrent first-misses.** When a client hits your API cold (no cache entry) with, say, 20 parallel requests during a post-deploy ramp, only *one* call to `resolvePin` fires — the other 19 await the same promise. Without single-flight, a cold cache + bursty traffic = N duplicate queries for the same client, which is usually the exact scenario a cache is supposed to solve. The helper handles this for you.
+
+3. **Explicit invalidation handles.** The returned tuple includes `invalidate(clientId)` and `invalidateAll()`. Call `invalidate` from your upgrade handler immediately after persisting the new pin so the next request sees the update instantly:
+
+```ts
+// In the handler for POST /versioning (or wherever you persist upgrades):
+await accountRepo.setApiVersion(accountId, newVersion);
+invalidate(accountId);     // CRITICAL — otherwise stale up to ttlMs
+```
+
+If you forget this call, a client who just upgraded will keep being served under their old pin for up to `ttlMs`. The TTL is a safety net (see below), not a correctness layer.
+
+**The TTL's real job: multi-instance drift.** In a rolling-deploy / multi-pod setup, one pod handles the `POST /versioning` request, writes the DB, and calls `invalidate` on *its own* local cache. Every other pod still has the pre-upgrade pin cached. If you never invalidated at all, those pods would serve the old pin forever. The TTL bounds that staleness — after `ttlMs`, every pod re-reads storage regardless. Pick a TTL that matches your tolerance for cross-pod convergence time: 5 minutes is a good default for user-facing APIs; tighten to 30 seconds for internal services that mutate pins frequently.
+
+**Error semantics.** If `resolvePin` throws, the rejection *is not cached* — the cache entry is deleted on rejection and the next call retries fresh. This matches what production adopters landed on: transient DB failures shouldn't pin a client to `fallback` for the full TTL.
+
+**When NOT to use it.** If your auth middleware already resolves the client's pin (e.g., `req.user.apiVersion` is populated by the JWT's claims or set by an upstream gateway), don't cache a layer you don't need — just write `identify: req => req.user.apiVersion ?? null` and return it directly from the resolver (or point `apiVersionDefaultValue` at a plain function that reads it). Double-caching adds a TTL you have to invalidate and a cache key drift risk you don't need.
+
+`ttlMs: 0` disables caching entirely — every request falls through to `resolvePin`. Useful for testing and for environments where you want the cache interface (invalidation, single-flight) but not the staleness.
+
 ### Stale pins — what they are, and why tsadwyn doesn't auto-heal them
 
 A **stale pin** is a stored pin value that points at a version no longer in the current `VersionBundle`. The pin was written at some point, persisted, and is now orphaned because the bundle has evolved out from under it. This happens in four realistic scenarios:
@@ -288,54 +332,115 @@ router.delete('/users/:id', null, null, async (req) => {
 - It's lint-grep-able: `git grep VersionChangeWithSideEffects` surfaces every behavior-level change at once.
 - The `isApplied` getter enforces the "at-or-newer-than" semantic correctly — you don't hand-roll date comparisons per handler.
 
-#### Pattern 2: `buildBehaviorResolver(map, fallback)` — map version → value
+#### Pattern 2: Declarative `behaviorHad` overlay — typed behavior per version
 
-Good for **configurable values** that differ per version: rate limits, timeouts, retry counts, feature flags, field defaults. One resolver, many callsites, zero scattered comparisons.
+Once you have more than one or two behavior toggles, scattering `VersionChangeWithSideEffects` classes gets awkward: each class is a singleton `isApplied` boolean, and there's no single catalog you can point at to answer "what does version 2024-06-01 actually do differently?". The `createVersionedBehavior` primitive lets you declare a **typed behavior shape** plus per-change deltas (`behaviorHad: Partial<Behavior>`) and derive the per-version snapshot map by overlay.
 
 ```ts
-import { buildBehaviorResolver } from 'tsadwyn';
+import { createVersionedBehavior } from 'tsadwyn';
 
-// Define the map once, close to the other versioning concerns.
-const getRateLimit = buildBehaviorResolver(
-  new Map([
-    ['2025-01-01', { perSecond: 1000, burst: 2000 }],
-    ['2024-06-01', { perSecond: 500,  burst: 1000 }],
-    ['2024-01-01', { perSecond: 100,  burst:  200 }],
-  ]),
-  { perSecond: 1000, burst: 2000 },  // fallback when version is unknown/absent
-  { onUnknown: 'warn-once', logger: pinoLogger },  // optional telemetry
-);
+// 1. Declare the typed behavior shape + the head (latest) values.
+interface ApiVersionBehavior {
+  requireIdempotencyKey: boolean;
+  deleteBehavior: 'cascade' | 'soft';
+  rateLimitPerSecond: number;
+  errorDetailShape: 'flat' | 'rfc7807';
+  timestampFormat: 'iso' | 'unix';
+  // ... one field per behavior axis you version.
+}
 
-// Handlers and middleware read a value, never a version string:
-router.use((req, res, next) => {
-  const limit = getRateLimit();           // reads apiVersionStorage, returns the right config
-  enforceRateLimit(req, limit);
-  next();
+const HEAD_BEHAVIOR: ApiVersionBehavior = {
+  requireIdempotencyKey: true,
+  deleteBehavior: 'soft',
+  rateLimitPerSecond: 1000,
+  errorDetailShape: 'rfc7807',
+  timestampFormat: 'iso',
+};
+
+// 2. Build the versioned behavior. Each change declares what the version
+//    BEFORE its `version` field had — `behaviorHad: Partial<Behavior>` is
+//    compile-time-checked against the head shape so you can't typo a field.
+export const behavior = createVersionedBehavior({
+  head: HEAD_BEHAVIOR,
+  initialVersion: '2024-01-01',     // optional: oldest version in your bundle
+  changes: [
+    {
+      version: '2025-06-01',
+      description: 'Idempotency keys now required on all POST endpoints.',
+      behaviorHad: { requireIdempotencyKey: false },
+    },
+    {
+      version: '2025-06-01',
+      description: 'DELETE endpoints now soft-delete by default.',
+      behaviorHad: { deleteBehavior: 'cascade' },
+    },
+    {
+      version: '2025-01-01',
+      description: 'Errors switched to RFC 7807 problem+json.',
+      behaviorHad: { errorDetailShape: 'flat' },
+    },
+  ],
 });
 
-router.post('/bulk-import', ..., async (req) => {
-  const { burst } = getRateLimit();        // same resolver, different callsite
-  // ...
+// 3. Use `behavior.get()` everywhere — it reads the current request's
+//    version out of `apiVersionStorage` and returns the typed snapshot.
+//    Also available: `behavior.at(version)` for tests/admin UIs and
+//    `behavior.map` for changelog rendering.
+```
+
+Then handlers, middleware, and service code consume `behavior.get()` — **never** the version string:
+
+```ts
+// middleware/idempotency.ts
+export function enforceIdempotency(req, res, next) {
+  if (!behavior.get().requireIdempotencyKey) return next();     // off for older versions
+  if (!req.headers['idempotency-key']) {
+    throw new HttpError(400, { detail: 'idempotency-key header is required' });
+  }
+  next();
+}
+
+// services/userService.ts
+export async function deleteUser(id: string) {
+  if (behavior.get().deleteBehavior === 'soft') {
+    await userRepo.softDelete(id);
+  } else {
+    await userRepo.deleteWithCascade(id);
+  }
+}
+
+// routes/orders.ts
+router.get('/orders/:id', null, Order, async (req) => {
+  const order = await orderService.get(req.params.id);
+  return behavior.get().timestampFormat === 'unix'
+    ? { ...order, created_at: Math.floor(order.created_at.getTime() / 1000) }
+    : order;
 });
 ```
 
-**When `buildBehaviorResolver` beats `isApplied`:**
+**Why `createVersionedBehavior` beats a raw `Map<version, config>`:**
 
-- The behavior has **more than two states** — e.g., three different rate limits across three versions
-- You want to surface the per-version values in docs / admin UIs (`Object.fromEntries(map)` gives you the snapshot)
-- A future version might want to introduce a new tier without touching every caller
+- **Single authoritative site per behavior axis.** `deleteBehavior: 'cascade' | 'soft'` is typed in `ApiVersionBehavior`; any code that reads or writes it passes through the type system. Adding a third mode forces you to update head, the change that introduced the split, and every branch that consumed it — the compiler tells you every site.
+- **Compile-time typo protection.** `behaviorHad: Partial<ApiVersionBehavior>` means the compiler rejects `behaviorHad: { idemp_key_required: true }` because that field doesn't exist — no silent no-ops from typo'd field names.
+- **Scales as versions add.** When you cut a new intermediate version, add its boundary as a new `change.version` and the overlay walker reconstructs every version's snapshot automatically — no rewriting of consumer callsites.
+- **Auto-surfaces in the changelog.** Each change's `description` pairs with your OpenAPI changelog entry so consumers see both shape *and* behavior changes in one place.
+- **`behaviorHad: Partial<>` mirrors how you already think about schemas.** Schema instructions say "this field *had* X in the previous version" — now behavior says the same thing. Same reverse-chronology mental model, no new idiom.
+- **Head is the reference.** The head snapshot is the one true baseline; every other version is overlay deltas on top. You can't drift an older version's behavior out of sync by editing one callsite — the only way to change it is to edit a `behaviorHad`.
 
-**`onUnknown` telemetry** (`'silent'` / `'warn-once'` / `'warn-every'`) gives you a signal when a request shows up with a version the map doesn't know about — usually a typo'd header or a stale pin. The resolver returns `fallback` so the request still completes while the log alerts you.
+**What about simple "is this behavior change applied?" booleans?** Still use Pattern 1 — a standalone `VersionChangeWithSideEffects` class is fine when the change doesn't belong in the typed behavior shape (e.g., a one-off operational switch that only affects one handler). But once you have three or more behavior axes, centralize them into `createVersionedBehavior` — the list-every-version-change-in-one-file benefit compounds fast.
+
+> **Library escape hatch: `buildBehaviorResolver(map, fallback, options?)`.** For one-off cases where you don't want to declare a typed shape (e.g. a single rate-limit table), tsadwyn exports a bare-bones resolver that takes a raw `Map<version, value>` and returns a getter. `onUnknown: 'silent' | 'warn-once' | 'warn-every'` gives you a signal when a request shows up with a version the map doesn't know about (typo'd header, stale pin). The resolver falls back to `fallback` and keeps serving.
 
 #### Which to reach for
 
 | Shape of the change | Reach for |
 |---|---|
-| One thing on; one thing off — "v2 does X differently" | `VersionChangeWithSideEffects.isApplied` |
-| A value that changes per version (int, config object, feature flags) | `buildBehaviorResolver` |
-| A behavior change that ALSO changes the wire shape | A regular `VersionChange` with migrations + `isApplied` in the handler |
+| One-off "v2 does X differently" boolean | `VersionChangeWithSideEffects.isApplied` |
+| Three or more behavior axes that differ per version | `createVersionedBehavior({ head, changes })` |
+| Quick one-off version → value map, no typed shape needed | `buildBehaviorResolver(map, fallback)` |
+| A behavior change that ALSO changes the wire shape | Regular `VersionChange` with migrations + behavior branch in the handler |
 
-Both primitives read from the same `apiVersionStorage` the request-dispatch pipeline writes — so whichever version a client resolved to (explicit header, `perClientDefaultVersion`, fallback) is what the behavior branches see. No extra wiring.
+All three patterns read from the same `apiVersionStorage` the request-dispatch pipeline writes — so whichever version a client resolved to (explicit header, `perClientDefaultVersion`, fallback) is what the behavior branches see. No extra wiring.
 
 ### Upgrade semantics — the `/versioning` resource (optional)
 
@@ -467,6 +572,89 @@ router.post('/versioning', UpgradeReq, UpgradeRes, async (req) => {
 
 Forward-only upgrades are the Stripe convention — `allowDowngrade: true` is the admin escape hatch.
 
+### Reading the raw request — `currentRequest()`
+
+**The stripped-handler-view problem.** tsadwyn hands your handler a deliberately narrow argument: `{ body, params, query, headers }`. That's it. It doesn't pass through the full Express `Request` because the framework's contract is supposed to be explicit: every value your handler consumes should be either (a) a schema-typed piece of the HTTP contract or (b) something the framework guarantees. Passing `req` around lets handlers reach for arbitrary things — session objects, cookies, IP addresses, per-request state written by some middleware five layers up — and that couples the versioned contract to an ever-growing implicit surface.
+
+**But real apps need the escape hatch.** The stripped view is fine for pure request/response mapping. It falls short the moment upstream middleware mutates `req` with state that isn't part of the schema: `req.user` from your auth middleware, `req.claims` from a JWT decoder, `req.tenantId` from a multi-tenant resolver, `req.traceId` from OpenTelemetry. Those values aren't *part of the wire contract* — they're framework-level context that handlers need but clients don't send. Pre-stripping them out means your handler would either have to re-read the header and re-decode the JWT (gross) or thread the state through some side channel (worse).
+
+`currentRequest()` is that escape hatch:
+
+```ts
+import { currentRequest } from 'tsadwyn';
+
+router.get('/me', null, User, async () => {
+  const req = currentRequest();                   // raw Express Request
+  const userId = req.user?.id;                    // set by auth middleware
+  const traceId = req.headers['x-trace-id'];      // could also read via headers arg
+  const tenantId = (req as any).tenant?.id;       // set by tenant middleware
+  return userService.getForContext(userId, tenantId, traceId);
+});
+```
+
+**How it works — no middleware to mount.** tsadwyn captures the full `Request` into an `AsyncLocalStorage` instance *inside its own handler dispatcher*, immediately before invoking your handler. You don't install anything: any call to `currentRequest()` from inside a versioned handler (or from code it awaits) reads the correct request. Concurrent requests are isolated by Node's ALS semantics — request A's handler never sees request B's `req`, even if their promise chains interleave.
+
+The same ALS scope extends into migration callbacks:
+
+```ts
+class LogUserOnRequest extends VersionChange {
+  description = 'capture caller identity for audit migrations';
+  instructions = [];
+
+  migrateRequest = convertRequestToNextVersionFor(Order)(
+    (_req: RequestInfo) => {
+      // Response/request migrations run inside the same dispatch scope —
+      // they see the originating Express request too.
+      const actor = (currentRequest() as any).user?.id ?? 'anonymous';
+      auditLog.record({ actor, version: apiVersionStorage.getStore() });
+    },
+  );
+}
+```
+
+**When NOT to use it.** If the value you're reaching for belongs in the versioned contract — a piece of the request body, a query parameter, a documented header — put it on the schema instead. `currentRequest()` is for context that comes from *framework* layers (middleware, transport), not from the HTTP message the client sends. A handler that reaches for `currentRequest().body` has strayed from its own contract.
+
+**Throws vs null.** `currentRequest()` throws if called outside a tsadwyn handler scope — that's a loud signal you've got a bug (calling it from a background job, an import-time module, an Express handler that bypassed the tsadwyn dispatcher). Use `currentRequestOrNull()` when the call sits at a library boundary where absence is expected (shared helpers used from both tsadwyn handlers and plain Express).
+
+### Route shadowing — the first-match-wins trap
+
+**The bug.** Express routes via `path-to-regexp`, which resolves paths in **registration order** and takes the **first** pattern that matches. Most of the time this is fine. It becomes a production bug when a parameterized pattern is registered before a sibling literal:
+
+```ts
+// Registered first: catches EVERY /users/<anything> including /users/search.
+router.get('/users/:id', ..., handler);
+// Registered second: NEVER reached. Path-to-regexp already matched :id = "search"
+// on the previous line, and the UUID validator on that handler 400s with
+// "search is not a valid UUID" from deep inside your handler chain.
+router.get('/users/search', ..., searchHandler);
+```
+
+The first-time-hit-by-this signature is always the same: a handler's validator middleware rejects a request with a cryptic error, you spend an afternoon walking the stack, and eventually realize the handler that 400'd was never the intended recipient. Production consumers hit this roughly once per real-world app.
+
+**What tsadwyn detects.** At `generateAndIncludeVersionedRouters()` time, tsadwyn scans every route in registration order (per method). For each later route whose path is fully *literal* (no `:param`, no `*`), it checks whether any earlier route on the same method has a pattern that would match the literal. If yes, that pair is a shadow. The detection is conservative: a `:id(\\d+)` constrained param is still treated as a catch-all for safety, so you get a false-positive warn rather than a missed bug.
+
+Overlapping-wildcard cases (`/users/:id` then `/users/:name`) are deliberately ignored — those are either intentional duplicates that Express itself will complain about, or they're ambiguous enough that warning would be noise.
+
+**Policy — when to pick which:**
+
+| Policy | Pick this when |
+|---|---|
+| `'warn'` *(default)* | Safe for any app. You get one log line per shadow at boot; the app still starts. Use when you're adopting tsadwyn on an existing codebase and don't want to risk a boot break from a shadow you haven't audited yet. |
+| `'throw'` | New apps and CI enforcement. Refuses to initialize, so the mistake can't ship. Best paired with a fresh team convention ("register literals before wildcards, always"). |
+| `'silent'` | You've got an intentional shadow (rare — usually when a wildcard is *meant* to be a catch-all and a literal sibling is handled by a different mount or middleware short-circuit). Audit first, silence only after. |
+
+```ts
+const app = new Tsadwyn({
+  versions,
+  onRouteShadowing: 'throw',          // or 'warn' | 'silent'
+  routeShadowingLogger: {             // structured log sink; defaults to console.warn
+    warn: (ctx, msg) => pinoLogger.warn(ctx, msg),
+  },
+});
+```
+
+**The policy is global, not per-pair.** If you have one intentional shadow, silencing globally hides every other one — usually not what you want. The cleaner fix is to reorder the routes (register the literal first). If you genuinely need per-pair suppression, tell us and we'll add a marker — but 99% of the time reordering is the right answer.
+
 ### Adopting tsadwyn incrementally alongside existing Express routes
 
 You don't have to version your whole surface at once. tsadwyn mounts on an Express app with fall-through semantics — the versioned dispatcher catches its registered paths, and everything else passes through to the rest of your Express chain:
@@ -485,7 +673,7 @@ expressApp.use(versioned.expressApp);
 expressApp.use(existingRouter);
 ```
 
-**One landmine to watch for:** path-to-regexp is first-match-wins. If you register a parameterized route like `GET /widgets/:id` before a sibling literal `GET /widgets/archived` (whether in tsadwyn or upstream Express), the wildcard will shadow the literal silently. tsadwyn emits a generation-time warning when it detects this; register the literal first to fix.
+**One landmine to watch for:** path-to-regexp is first-match-wins, so a parameterized route registered before a sibling literal silently eats every request that should have reached the literal. tsadwyn ships a dedicated detector for this — see [Route shadowing — the first-match-wins trap](#route-shadowing--the-first-match-wins-trap) for the full explanation and policy options.
 
 For running examples of both patterns end-to-end, see [`examples/stripe-api.ts`](./examples/stripe-api.ts) (Stripe-style multi-version API) and [`examples/task-api.ts`](./examples/task-api.ts) (webhook versioning, CSV export via `raw()`, domain exceptions, `deletedResponseSchema`).
 
@@ -546,6 +734,8 @@ For running examples of both patterns end-to-end, see [`examples/stripe-api.ts`]
 | `VersionPickingOptions.onUnsupportedVersion` | `'reject'` (400 with `{error, sent, supported}`) \| `'fallback'` (substitute default + warn) \| `'passthrough'` (default, stores verbatim) |
 | `TsadwynOptions.preVersionPick` | Middleware that runs **before** `versionPickingMiddleware` — the place to put auth so `apiVersionDefaultValue` can read `req.user`. Scoped to versioned dispatch (utility endpoints bypass). |
 | `perClientDefaultVersion(opts)` | Canonical DB-backed default resolver: `identify` extracts client id, `resolvePin` loads their version, `onStalePin` handles bundle evictions. Per-request WeakMap cache. Optional `pinOnFirstResolve: true` + `saveVersion` implements Stripe's "pin to current latest on the first authenticated call" behavior. |
+| `cachedPerClientDefaultVersion(opts)` | High-QPS variant: same options plus `ttlMs` for cross-request caching. Returns `{resolver, invalidate, invalidateAll}` so the upgrade endpoint can drop the cache for one client. Single-flights concurrent first-misses; errors bypass caching. |
+| `currentRequest()` / `currentRequestOrNull()` | Access the raw Express `Request` from inside any tsadwyn handler or migration callback. Captures `req` into AsyncLocalStorage automatically — no middleware to mount. Recovers middleware-injected state (`req.user`, claims, trace IDs) that the stripped handler view hides. |
 
 ### Helpers
 
@@ -555,6 +745,7 @@ For running examples of both patterns end-to-end, see [`examples/stripe-api.ts`]
 | `raw({mimeType, supportsRanges?})` | Response-schema marker for binary/streaming routes; sets `Content-Type` at emission and marks response migrations targeting this route as dead code |
 | `migratePayloadToVersion(schemaName, payload, targetVersion, versionBundle)` | Standalone payload reshaper — runs the same response migrations used in-flight against an outbound webhook payload for the destination client's pin |
 | `buildBehaviorResolver(map, fallback, opts?)` | Resolve per-version behavior flags in handlers; reads from `apiVersionStorage`, optional `warn-once`/`warn-every` telemetry on unknown versions |
+| `createVersionedBehavior({head, changes, initialVersion?})` | Typed overlay primitive: declare a `Behavior` shape + per-change deltas as `behaviorHad: Partial<Behavior>` and the builder derives each supported version's snapshot. Returns `{get, at, map}`. Compile-time protection against typo'd field names. |
 | `validateVersionUpgrade(args)` | Pure policy helper. Discriminated-union result (`{ok, previous, next}` \| `{ok: false, reason}`). Blocks downgrade + no-change by default; `allowDowngrade`/`allowNoChange` opt-outs; `iso-date` / `semver` / custom comparator. |
 | `createVersioningRoutes(opts)` | Pre-wired `VersionedRouter` exposing the RESTful `/versioning` resource (GET + POST with optimistic concurrency). Wraps `validateVersionUpgrade` with identify/load/save callbacks so consumers don't hand-roll the endpoint. |
 | `migrateResponseBody` | Standalone response migration utility (T-1701) |
@@ -581,7 +772,7 @@ For running examples of both patterns end-to-end, see [`examples/stripe-api.ts`]
 
 tsadwyn warns at `generateAndIncludeVersionedRouters()` time on these common mistakes:
 
-- Wildcard route registered before a sibling literal (`/users/:id` before `/users/archived`) — path-to-regexp is first-match-wins and the wildcard shadows the literal silently.
+- Wildcard route registered before a sibling literal (`/users/:id` before `/users/archived`) — path-to-regexp is first-match-wins and the wildcard shadows the literal silently. Policy is configurable via `onRouteShadowing: 'warn' | 'throw' | 'silent'` (default `'warn'`) and the structured `routeShadowingLogger` on `TsadwynOptions`.
 - `statusCode: 204` with a non-null `responseSchema` — Node strips the body at the wire level; body won't arrive at the client. Recommends `statusCode: 200` or `deletedResponseSchema()`.
 - Body-mutating response migration targeting a 204/304 route without `headerOnly: true` — dead code (body is stripped).
 - Response migration targeting a `raw()` route — dead code (body is opaque bytes, not JSON).
@@ -682,7 +873,7 @@ Simulate a request against the route table *without* dispatching. Answers "is ts
 ```bash
 # Matched route + candidates + migration chain
 tsadwyn simulate --app ./src/app.ts \
-  --method POST --path /api/virtual-accounts/abc/payout \
+  --method POST --path /api/charges/ch_abc/capture \
   --version 2025-06-01
 
 # With body — get an up-migrated preview (head-shape body the handler sees)
