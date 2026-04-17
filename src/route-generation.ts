@@ -33,6 +33,7 @@ import {
 } from "./exceptions.js";
 import { getSchemaName } from "./zod-extend.js";
 import { AlterSchemaInstructionFactory } from "./structure/schemas.js";
+import { requestContextStorage } from "./request-context.js";
 
 /**
  * Build a ZodSchemaRegistry from the route definitions AND from schemas
@@ -1075,7 +1076,17 @@ function createVersionedHandler(
 ): (req: Request, res: Response, next: NextFunction) => void {
   const successStatus = routeDef.statusCode ?? 200;
 
-  return async (req: Request, res: Response, next: NextFunction) => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    // Capture the raw Express Request into ALS so handlers + migration
+    // callbacks can recover middleware-injected state (req.user, claims,
+    // trace IDs, etc.) via currentRequest() without threading it through
+    // the stripped handler signature.
+    requestContextStorage.run(req, () => {
+      void dispatch(req, res, next);
+    });
+  };
+
+  async function dispatch(req: Request, res: Response, next: NextFunction) {
     try {
       // T-600: Validate path parameters. Thrown as ValidationError so
       // the error flows through the catch block's errorMapper +
@@ -1450,7 +1461,7 @@ function createVersionedHandler(
       // Non-HTTP errors continue to the Express error handler
       next(err);
     }
-  };
+  }
 }
 
 /**

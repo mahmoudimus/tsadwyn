@@ -107,6 +107,14 @@ export { migrateResponseBody } from "./migrate.js";
 export { perClientDefaultVersion } from "./per-client-default.js";
 export type { PerClientDefaultVersionOptions } from "./per-client-default.js";
 
+// Request-scoped access to the raw Express Request inside tsadwyn handlers
+// (captures middleware-injected state that the stripped handler view hides)
+export {
+  currentRequest,
+  currentRequestOrNull,
+  requestContextStorage,
+} from "./request-context.js";
+
 // Behavior-map helper for per-version behavior branching in handlers
 export { buildBehaviorResolver } from "./behavior-resolver.js";
 export type { BuildBehaviorResolverOptions } from "./behavior-resolver.js";
