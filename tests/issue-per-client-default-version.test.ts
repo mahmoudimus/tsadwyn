@@ -1,11 +1,8 @@
 /**
- * FAILING TEST — verifies the gap described in tsadwyn-issue-per-client-default-version.md
- *
- * Today: consumers hand-roll the resolver chain (identify → resolvePin →
- * fallback), forget to dedupe, and forget the stale-pin case.
- *
- * These tests turn green when `perClientDefaultVersion` is exported with
- * the contract documented in the issue spec.
+ * Covers `perClientDefaultVersion` — the canonical DB-backed default-
+ * version resolver. Standardizes the identify → resolvePin → fallback
+ * chain every Stripe-style adopter rolls by hand (and usually forgets
+ * the per-request dedupe + stale-pin policy).
  *
  * Run: npx vitest run tests/issue-per-client-default-version.test.ts
  */
@@ -18,10 +15,8 @@ import {
   VersionBundle,
   VersionedRouter,
   apiVersionStorage,
+  perClientDefaultVersion,
 } from "../src/index.js";
-// GAP: not exported today
-// @ts-expect-error — intentional
-import { perClientDefaultVersion } from "../src/index.js";
 
 describe("Issue: perClientDefaultVersion helper", () => {
   it("identifies client, resolves pin, uses it as default version", async () => {

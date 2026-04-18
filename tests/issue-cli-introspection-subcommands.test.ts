@@ -1,11 +1,10 @@
 /**
- * FAILING TEST — verifies the CLI shells for the introspection triad.
- *
- * The programmatic APIs (`dumpRouteTable`, `inspectMigrationChain`,
- * `simulateRoute`) already exist and have their own test coverage. This
- * file proves the CLI subcommands — `tsadwyn routes`, `tsadwyn migrations`,
- * `tsadwyn simulate` — are wired up in `cli.ts` and work against a real
- * fixture app.
+ * Covers the CLI shells for the introspection triad —
+ * `tsadwyn routes`, `tsadwyn migrations`, `tsadwyn simulate`. The
+ * programmatic APIs (`dumpRouteTable`, `inspectMigrationChain`,
+ * `simulateRoute`) have their own unit tests; this file wires each
+ * CLI runner against a real fixture app to guard the user-facing
+ * command contract.
  *
  * Run: npx vitest run tests/issue-cli-introspection-subcommands.test.ts
  */
@@ -13,8 +12,6 @@ import { describe, it, expect } from "vitest";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-// GAP: these three runners are not exported from cli.ts yet
-// @ts-expect-error — intentional
 import { runRoutes, runMigrations, runSimulate } from "../src/cli.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));

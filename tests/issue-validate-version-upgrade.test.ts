@@ -1,17 +1,13 @@
 /**
- * FAILING TEST — verifies the gap described in tsadwyn-issues-additional-gaps.md §4
- *
- * Every adopter writing a `/versioning/upgrade` endpoint re-implements the
- * same upgrade-policy decisions: is target supported, is it a downgrade, is
- * it a no-op, how do we compare version strings. The proposed
- * `validateVersionUpgrade()` standardizes this as a pure function.
+ * Covers `validateVersionUpgrade` — the pure upgrade-policy helper that
+ * standardizes the decisions every `/versioning/upgrade` endpoint needs:
+ * is the target supported, is it a downgrade, is it a no-op, how do we
+ * compare version strings (iso-date / semver / custom comparator).
  *
  * Run: npx vitest run tests/issue-validate-version-upgrade.test.ts
  */
 import { describe, it, expect } from "vitest";
 
-// GAP: validateVersionUpgrade is not exported from tsadwyn yet.
-// @ts-expect-error — intentional: drives the failing-import signal
 import { validateVersionUpgrade } from "../src/index.js";
 
 const SUPPORTED = ["2026-01-01", "2025-06-01", "2025-01-01", "2024-01-01"] as const;

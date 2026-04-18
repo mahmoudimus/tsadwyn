@@ -1,14 +1,14 @@
 /**
- * FAILING TEST — `raw()` binary / streaming response marker.
+ * Covers the `raw()` binary / streaming response marker.
  *
- * Consumers that return Buffer or Readable today work (route-generation
- * detects and sends them with application/octet-stream), but the pattern
- * is undeclared — `responseSchema: null` is a lie (there IS a schema,
- * it's just not JSON). The `raw()` marker makes the contract explicit:
+ * Handlers that return Buffer or Readable work without it, but
+ * `responseSchema: null` doesn't communicate the actual contract (there
+ * IS a schema — it's just not JSON). `raw()` makes the declaration
+ * explicit:
  *   - The mime type is set automatically from the marker.
  *   - Response migrations targeting the route are flagged as dead code
  *     at generation time (body is opaque bytes).
- *   - OpenAPI output can eventually describe the binary response shape.
+ *   - OpenAPI output can describe the binary response shape.
  *
  * Run: npx vitest run tests/issue-raw-response.test.ts
  */
@@ -23,11 +23,8 @@ import {
   VersionedRouter,
   ResponseInfo,
   convertResponseToPreviousVersionFor,
+  raw,
 } from "../src/index.js";
-
-// GAP: not exported
-// @ts-expect-error — intentional
-import { raw } from "../src/index.js";
 
 describe("Issue: raw() binary/streaming response marker", () => {
   let warnSpy: ReturnType<typeof vi.spyOn>;

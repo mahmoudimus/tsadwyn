@@ -1,10 +1,8 @@
 /**
- * FAILING TEST — verifies the gap described in tsadwyn-issue-migration-chain-inspector.md
- *
- * Today: no public API for introspecting which migrations fire for a
- * given schema + client version.
- *
- * These tests turn green when `inspectMigrationChain()` is exported.
+ * Covers `inspectMigrationChain()` — the public introspection API for
+ * enumerating which migrations fire for a given schema + client version,
+ * in the order they'd run. Replaces the grep-the-source fallback
+ * consumers used to rely on.
  *
  * Run: npx vitest run tests/issue-migration-chain-inspector.test.ts
  */
@@ -21,11 +19,8 @@ import {
   RequestInfo,
   convertResponseToPreviousVersionFor,
   convertRequestToNextVersionFor,
+  inspectMigrationChain,
 } from "../src/index.js";
-
-// GAP: not exported
-// @ts-expect-error — intentional
-import { inspectMigrationChain } from "../src/index.js";
 
 const Order = z
   .object({ id: z.string(), amount: z.number(), currency: z.string() })

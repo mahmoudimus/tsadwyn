@@ -1,17 +1,11 @@
 /**
- * FAILING TEST — verifies the gap described in tsadwyn-issues-additional-gaps.md §2
- *
- * `convertResponseToPreviousVersionFor` only fires for in-flight HTTP
- * responses. Outbound webhooks dispatched from background jobs hand-build
- * payloads that bypass the migration pipeline entirely — a client pinned to
- * an older API version receives head-shaped webhook bodies.
- *
- * The proposal is a standalone helper:
- *
- *   migratePayloadToVersion(schemaName, payload, targetVersion, versionBundle)
- *
- * that walks the same response migrations registered against `schemaName`
- * and returns the payload reshaped for `targetVersion`.
+ * Covers `migratePayloadToVersion(schemaName, payload, targetVersion, bundle)`
+ * — the out-of-band payload reshaper. `convertResponseToPreviousVersionFor`
+ * only fires for in-flight HTTP responses, so outbound webhooks dispatched
+ * from background jobs hand-build payloads that would otherwise bypass the
+ * migration pipeline entirely. This helper walks the same response
+ * migrations registered against `schemaName` and returns the payload
+ * reshaped for the destination client's pin.
  *
  * NOTE: VersionChange subclasses are bound to one VersionBundle for life
  * (T-1602). Each `it()` declares its own classes so the bundles are
@@ -28,12 +22,8 @@ import {
   VersionChange,
   ResponseInfo,
   convertResponseToPreviousVersionFor,
+  migratePayloadToVersion,
 } from "../src/index.js";
-
-// GAP: migratePayloadToVersion is not exported. The import is intentionally
-// expected to fail at module-load until the helper ships.
-// @ts-expect-error — intentional: drives the failing-import signal
-import { migratePayloadToVersion } from "../src/index.js";
 
 const VirtualAccount = z
   .object({

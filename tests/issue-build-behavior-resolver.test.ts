@@ -1,25 +1,15 @@
 /**
- * FAILING TEST — verifies the gap described in tsadwyn-issues-additional-gaps.md §1
- *
- * Every consumer of tsadwyn ends up writing the same 3-line behavior-map
- * resolver:
- *
- *   const v = apiVersionStorage.getStore() ?? HEAD;
- *   return map.get(v) ?? HEAD_BEHAVIOR;
- *
- * The proposed `buildBehaviorResolver(map, fallback, opts?)` standardizes
- * this with optional warn-once / warn-every / silent telemetry on unknown
- * versions.
+ * Covers `buildBehaviorResolver(map, fallback, opts?)` — the low-level
+ * behavior-map resolver consumers reach for when they want a raw
+ * `Map<version, value>` lookup without the full `createVersionedBehavior`
+ * typed-shape ceremony. Exercises the `'silent' | 'warn-once' | 'warn-every'`
+ * telemetry for unknown-version lookups.
  *
  * Run: npx vitest run tests/issue-build-behavior-resolver.test.ts
  */
 import { describe, it, expect, vi } from "vitest";
 
-import { apiVersionStorage } from "../src/index.js";
-// GAP: buildBehaviorResolver is not exported from tsadwyn yet. This import
-// will fail at module load until the helper ships.
-// @ts-expect-error — intentional: drives the failing-import signal
-import { buildBehaviorResolver } from "../src/index.js";
+import { apiVersionStorage, buildBehaviorResolver } from "../src/index.js";
 
 interface Behavior {
   feature: string;

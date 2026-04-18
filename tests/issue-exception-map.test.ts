@@ -1,9 +1,8 @@
 /**
- * FAILING TEST — verifies the gap described in tsadwyn-issue-exception-map-helper.md
- *
- * exceptionMap() is a declarative helper on top of the errorMapper option
- * that adds introspection (has/lookup/registeredNames/describe) and CLI
- * integration via `tsadwyn exceptions`.
+ * Covers `exceptionMap()` — a declarative helper on top of the
+ * `errorMapper` option that adds introspection (has / lookup /
+ * registeredNames / describe) and CLI integration via
+ * `tsadwyn exceptions`.
  *
  * Run: npx vitest run tests/issue-exception-map.test.ts
  */
@@ -21,13 +20,9 @@ import {
   ResponseInfo,
   convertResponseToPreviousVersionFor,
   TsadwynStructureError,
+  exceptionMap,
 } from "../src/index.js";
 
-// GAP: not exported
-// @ts-expect-error — intentional
-import { exceptionMap } from "../src/index.js";
-// GAP: CLI subcommand not available yet
-// @ts-expect-error — intentional
 import { runExceptions } from "../src/cli.js";
 
 // ---------------------------------------------------------------------------

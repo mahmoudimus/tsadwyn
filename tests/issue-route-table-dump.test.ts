@@ -1,10 +1,7 @@
 /**
- * FAILING TEST — verifies the gap described in tsadwyn-issue-route-table-dump.md
- *
- * Today: no public API for enumerating registered routes per version.
- * Consumers grep source or read private `_versionedRouters`.
- *
- * These tests turn green when `dumpRouteTable()` is exported.
+ * Covers `dumpRouteTable` — the public API for enumerating registered
+ * routes per version with filters on method / path / visibility. Replaces
+ * the private `_versionedRouters` grepping consumers used to fall back on.
  *
  * Run: npx vitest run tests/issue-route-table-dump.test.ts
  */
@@ -18,11 +15,8 @@ import {
   VersionChange,
   VersionedRouter,
   endpoint,
+  dumpRouteTable,
 } from "../src/index.js";
-
-// GAP: not exported
-// @ts-expect-error — intentional
-import { dumpRouteTable } from "../src/index.js";
 
 const UserResp = z.object({ id: z.string(), name: z.string() }).named("IssueRouteDump_User");
 const ChargeResp = z.object({ id: z.string(), amount: z.number() }).named("IssueRouteDump_Charge");

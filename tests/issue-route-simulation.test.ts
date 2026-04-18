@@ -1,14 +1,10 @@
 /**
- * FAILING TEST — verifies the gap described in tsadwyn-issue-route-simulation-debug-tool.md
- *
- * `simulateRoute()` is the programmatic API that answers "is tsadwyn
- * responsible for this request, and if so, what would it do?" without
- * actually dispatching. Input: method + path + version (+ optional body).
- * Output: matched route (if any), every candidate and why it did/didn't
- * match, fallthrough reason with closest-miss suggestions, and the
- * request/response migration chains that would run.
- *
- * These tests turn green when `simulateRoute()` is exported.
+ * Covers `simulateRoute()` — the programmatic "what would tsadwyn do with
+ * this request?" introspector. Given method + path + version (+ optional
+ * body), returns the matched route (if any), every candidate and why it
+ * did or didn't match, fallthrough reason with closest-miss suggestions,
+ * and the request / response migration chains that would run. Intended
+ * for incident triage ("is tsadwyn responsible for this 4xx?").
  *
  * Run: npx vitest run tests/issue-route-simulation.test.ts
  */
@@ -26,11 +22,8 @@ import {
   convertRequestToNextVersionFor,
   convertResponseToPreviousVersionFor,
   endpoint,
+  simulateRoute,
 } from "../src/index.js";
-
-// GAP: not exported
-// @ts-expect-error — intentional
-import { simulateRoute } from "../src/index.js";
 
 const UserResp = z
   .object({ id: z.string(), name: z.string() })
