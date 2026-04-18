@@ -1,0 +1,108 @@
+name: Release
+
+# Tag-triggered publish to npm. Push an annotated tag `vX.Y.Z` on main after
+# bumping `package.json` version. The workflow:
+#   - Gates the publish on a clean typecheck + full test suite on Node 22
+#   - Builds the dual ESM/CJS tarball via `npm run build`
+#   - Verifies the tag matches `package.json`'s version (no mismatched tag fat-finger)
+#   - Publishes to npm with provenance attestation (OIDC, no long-lived NPM_TOKEN)
+#   - Creates a GitHub Release with auto-generated notes
+#
+# Pre-requisites (one-time setup on npmjs.com, after the first manual publish):
+#   1. Publish v0.1.0 manually from your laptop to claim the name:
+#         npm login
+#         npm publish                          # uses publishConfig.access=public
+#   2. Visit https://www.npmjs.com/package/tsadwyn/access → "Trusted Publisher"
+#      → "GitHub Actions" and fill in:
+#            Organization/user: mahmoudimus
+#            Repository:        tsadwyn
+#            Workflow filename: release.yml
+#            Environment name:  npm-publish   (matches `environment:` below)
+#   3. After that, every `git tag vX.Y.Z && git push origin vX.Y.Z` automatically
+#      publishes via OIDC — no secrets stored in GitHub.
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish to npm
+    runs-on: ubuntu-latest
+    # Gate on the same environment name configured as the npm trusted publisher
+    # on npmjs.com. GitHub will require approval for first-run execution if you
+    # enable "required reviewers" on this environment.
+    environment:
+      name: npm-publish
+      url: https://www.npmjs.com/package/tsadwyn
+    permissions:
+      contents: write      # for GitHub Release creation
+      id-token: write      # for npm OIDC trusted publishing
+
+    steps:
+      - name: Harden Runner
+        uses: step-security/harden-runner@v2
+        with:
+          egress-policy: audit
+
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0   # tags + history for Release notes auto-generation
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      - name: Install
+        run: npm ci
+
+      - name: Verify tag matches package.json version
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          PKG_VERSION=$(node -p "require('./package.json').version")
+          if [ "$TAG_VERSION" != "$PKG_VERSION" ]; then
+            echo "::error::Tag version ($TAG_VERSION) does not match package.json version ($PKG_VERSION)"
+            echo "Bump package.json first, commit, then tag. See RELEASING.md."
+            exit 1
+          fi
+          echo "Tag $GITHUB_REF_NAME matches package.json version $PKG_VERSION"
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      - name: Publish to npm (with provenance)
+        run: npm publish --provenance --access public
+        env:
+          # Empty on purpose — npm CLI picks up OIDC token from GitHub's
+          # ACTIONS_ID_TOKEN_REQUEST_URL / ACTIONS_ID_TOKEN_REQUEST_TOKEN
+          # env vars when `id-token: write` permission is granted above.
+          NODE_AUTH_TOKEN: ""
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
