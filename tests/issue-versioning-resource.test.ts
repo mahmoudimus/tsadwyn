@@ -1,18 +1,14 @@
 /**
- * FAILING TEST — RESTful /versioning resource helper for
- * self-service API-version upgrades.
- *
- * Every Stripe-style adopter ends up writing the same endpoint: a client
- * reads their current pin, then posts an upgrade. tsadwyn already ships
- * `validateVersionUpgrade` as the policy core; `createVersioningRoutes`
- * wraps it in the canonical RESTful resource shape.
+ * Covers `createVersioningRoutes` — the pre-wired RESTful `/versioning`
+ * resource helper for self-service API-version upgrades. Wraps
+ * `validateVersionUpgrade` (the policy core) in the canonical resource shape:
  *
  *   GET  /versioning            → {version, supported[], latest}
  *   POST /versioning {from, to} → {previous_version, current_version}
  *
- * `{from, to}` gives optimistic concurrency: if the stored pin has drifted
- * since the client last read it, the server rejects with 409 rather than
- * silently overwriting.
+ * The `{from, to}` payload implements optimistic concurrency: if the stored
+ * pin drifted since the client last read it, the server rejects with 409
+ * rather than silently overwriting.
  *
  * Run: npx vitest run tests/issue-versioning-resource.test.ts
  */
@@ -23,11 +19,8 @@ import {
   Tsadwyn,
   Version,
   VersionBundle,
+  createVersioningRoutes,
 } from "../src/index.js";
-
-// GAP: not exported
-// @ts-expect-error — intentional
-import { createVersioningRoutes } from "../src/index.js";
 
 // An in-memory "account repo" simulates the consumer's persistence layer.
 function buildStore() {
@@ -372,5 +365,33 @@ describe("createVersioningRoutes — RESTful /versioning resource", () => {
       current_version: "2024-01-01",
     });
     expect(store.load("acct_new")).toBe("2024-01-01");
+  });
+});
+
+describe("createVersioningRoutes — construction-time guards", () => {
+  // Empty supportedVersions would leave `latest: supportedVersions[0]` as
+  // `undefined`, which fails the Zod response schema at dispatch far from
+  // the misconfiguration. Fail fast at construction with a clear error.
+  it("throws when supportedVersions is an empty array", () => {
+    expect(() =>
+      createVersioningRoutes({
+        identify: () => "acct",
+        loadVersion: () => null,
+        saveVersion: () => {},
+        supportedVersions: [],
+      }),
+    ).toThrow(/supportedVersions.* must contain at least one/i);
+  });
+
+  it("throws when supportedVersions is missing (undefined)", () => {
+    expect(() =>
+      createVersioningRoutes({
+        identify: () => "acct",
+        loadVersion: () => null,
+        saveVersion: () => {},
+        // @ts-expect-error — intentionally omitted to exercise the guard
+        supportedVersions: undefined,
+      }),
+    ).toThrow(/supportedVersions.* must contain at least one/i);
   });
 });

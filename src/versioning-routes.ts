@@ -94,6 +94,19 @@ const UpgradeResponse = named(
 export function createVersioningRoutes(
   opts: CreateVersioningRoutesOptions,
 ): VersionedRouter {
+  // Validate supportedVersions up-front. Empty list would make `latest`
+  // resolve to `undefined`, which fails the Zod response schema at
+  // dispatch time with a confusing "expected string, got undefined"
+  // error far from the misconfiguration. Fail loudly at construction
+  // instead so the problem surfaces at app boot.
+  if (!opts.supportedVersions || opts.supportedVersions.length === 0) {
+    throw new Error(
+      "createVersioningRoutes: `supportedVersions` must contain at least one " +
+        "version string. Typically pass `bundle.versionValues` from your " +
+        "VersionBundle.",
+    );
+  }
+
   const path = opts.path ?? "/versioning";
   const router = new VersionedRouter();
 
