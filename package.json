@@ -39,6 +39,21 @@
     "stripe"
   ],
   "license": "MIT",
+  "author": "Mahmoud Abdelkader <mabdelkader@gmail.com>",
+  "homepage": "https://github.com/mahmoudimus/tsadwyn#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mahmoudimus/tsadwyn.git"
+  },
+  "bugs": {
+    "url": "https://github.com/mahmoudimus/tsadwyn/issues"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "dependencies": {
     "@types/multer": "^2.1.0",
     "commander": "^14.0.3",
