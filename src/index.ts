@@ -67,6 +67,7 @@ export {
   InvalidGenerationInstructionError,
   ModuleIsNotVersionedError,
   HttpError,
+  ValidationError,
 } from "./exceptions.js";
 
 // OpenAPI
@@ -101,6 +102,100 @@ export {
 
 // T-1701: Standalone response migration utility
 export { migrateResponseBody } from "./migrate.js";
+
+// Per-client default version resolver (pairs with preVersionPick)
+export { perClientDefaultVersion } from "./per-client-default.js";
+export type { PerClientDefaultVersionOptions } from "./per-client-default.js";
+
+// Cached variant: TTL'd map + invalidation handles for the upgrade endpoint
+export { cachedPerClientDefaultVersion } from "./cached-per-client-default.js";
+export type {
+  CachedPerClientDefaultVersionOptions,
+  CachedPerClientDefaultVersion,
+} from "./cached-per-client-default.js";
+
+// Request-scoped access to the raw Express Request inside tsadwyn handlers
+// (captures middleware-injected state that the stripped handler view hides)
+export {
+  currentRequest,
+  currentRequestOrNull,
+  requestContextStorage,
+} from "./request-context.js";
+
+// Behavior-map helper for per-version behavior branching in handlers
+export { buildBehaviorResolver } from "./behavior-resolver.js";
+export type { BuildBehaviorResolverOptions } from "./behavior-resolver.js";
+
+// Typed overlay primitive — declarative behavior catalog built from HEAD + deltas
+export { createVersionedBehavior } from "./versioned-behavior.js";
+export type {
+  CreateVersionedBehaviorOptions,
+  VersionBehaviorChange,
+  VersionedBehavior,
+} from "./versioned-behavior.js";
+
+// Route-shadowing detector (exposed for CLI tools and advanced callers)
+export { detectRouteShadows, reportRouteShadows } from "./route-shadowing.js";
+export type {
+  RouteShadowingPolicy,
+  RouteShadowingLogger,
+  RouteShadow,
+} from "./route-shadowing.js";
+
+// Canonical upgrade-policy helper for /versioning/upgrade endpoints
+export { validateVersionUpgrade } from "./version-upgrade.js";
+export type {
+  ValidateVersionUpgradeArgs,
+  ValidateVersionUpgradeResult,
+  CompareFn,
+} from "./version-upgrade.js";
+
+// Pre-wired RESTful /versioning resource (GET + POST with optimistic
+// concurrency) built on top of validateVersionUpgrade.
+export { createVersioningRoutes } from "./versioning-routes.js";
+export type { CreateVersioningRoutesOptions } from "./versioning-routes.js";
+
+// Declarative exception→HttpError helper (pairs with errorMapper option)
+export { exceptionMap, isExceptionMapFn } from "./exception-map.js";
+export type {
+  ExceptionMapConfig,
+  ExceptionMapEntry,
+  ExceptionMapFn,
+  ExceptionMapping,
+} from "./exception-map.js";
+
+// Outbound payload migration (webhooks, internal events)
+export { migratePayloadToVersion } from "./migrate-payload.js";
+
+// Stripe-style deleted-resource response helper
+export { deletedResponseSchema } from "./delete-response.js";
+
+// Raw / binary / streaming response marker
+export { raw, isRawResponse, RAW_RESPONSE_MARKER } from "./raw-response.js";
+export type { RawResponseOptions, RawResponseMarker } from "./raw-response.js";
+
+// Debugging / introspection trio: routes / migrations / simulation
+export { dumpRouteTable } from "./route-table.js";
+export type {
+  DumpRouteTableOptions,
+  RouteTableEntry,
+} from "./route-table.js";
+
+export { inspectMigrationChain } from "./migration-chain.js";
+export type {
+  InspectMigrationChainOptions,
+  MigrationChainEntry,
+} from "./migration-chain.js";
+
+export { simulateRoute } from "./route-simulation.js";
+export type {
+  SimulateRouteOptions,
+  SimulationResult,
+  MatchedRouteSummary,
+  RouteCandidate,
+  FallthroughSummary,
+  MigrationSummary,
+} from "./route-simulation.js";
 
 // T-1300 and T-1301: AST analysis and custom module loading
 // These features are N/A in the TypeScript version. In the Python Tsadwyn library,

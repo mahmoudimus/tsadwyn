@@ -232,7 +232,9 @@ describe("T-1900: HttpError response migration", () => {
       description = "Does NOT migrate error responses";
       instructions: any[] = [];
 
-      @convertResponseToPreviousVersionFor(SkipRes)
+      // Explicit opt-out: default is TRUE now (Stripe semantics). Pass
+      // false to preserve the success-only scope this test asserts.
+      @convertResponseToPreviousVersionFor(SkipRes, { migrateHttpErrors: false })
       migrateRes(response: ResponseInfo) {
         response.body.extra = "should_not_appear";
       }

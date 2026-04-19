@@ -164,6 +164,38 @@ export class HttpError extends Error {
   }
 }
 
+/**
+ * HttpError subclass thrown when tsadwyn's built-in request validation
+ * rejects an incoming request (Zod schema parse fails on body, params,
+ * or query). Carries the Zod error list under `body.detail` — shape is
+ * byte-identical to the previous inline 422 response so existing clients
+ * see no change by default.
+ *
+ * Because it flows through tsadwyn's error pipeline (errorMapper +
+ * migrateHttpErrors response migrations), consumers can reshape the
+ * wire envelope via any of:
+ *
+ *   - `errorMapper` / `exceptionMap` keyed on `err.name === "ValidationError"`
+ *   - `convertResponseToPreviousVersionFor(..., { migrateHttpErrors: true })`
+ *   - catching in Express middleware downstream
+ *
+ * `where` identifies which validator rejected: 'body' | 'params' | 'query'.
+ */
+export class ValidationError extends HttpError {
+  /** Which slot failed validation — body, path params, or query string. */
+  where: "body" | "params" | "query";
+
+  constructor(
+    where: "body" | "params" | "query",
+    errors: unknown[],
+  ) {
+    super(422, { detail: errors });
+    this.name = "ValidationError";
+    this.where = where;
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
 // ── Module errors ───────────────────────────────────────────────────────────
 
 export class ModuleIsNotVersionedError extends TsadwynError {

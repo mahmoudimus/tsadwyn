@@ -122,6 +122,8 @@ export interface AlterResponseBySchemaInstruction {
   methodName: string;
   migrateHttpErrors: boolean;
   checkUsage: boolean;
+  /** When true, migration runs on body-less responses (HEAD, 204, 304). */
+  headerOnly: boolean;
 }
 
 /**
@@ -145,6 +147,8 @@ export interface AlterResponseByPathInstruction {
   transformer: (response: ResponseInfo) => void;
   methodName: string;
   migrateHttpErrors: boolean;
+  /** When true, migration runs on body-less responses (HEAD, 204, 304). */
+  headerOnly: boolean;
 }
 
 /**
@@ -160,6 +164,15 @@ export interface RequestMigrationOptions {
 export interface ResponseMigrationOptions {
   migrateHttpErrors?: boolean;
   checkUsage?: boolean;
+  /**
+   * When true, the migration runs even on body-less responses (HEAD, 204 No
+   * Content, 304 Not Modified). Use when your transformer only touches
+   * `res.headers` and doesn't depend on `res.body` being populated.
+   *
+   * Composes with `migrateHttpErrors: true` — a migration flagged both
+   * headerOnly and migrateHttpErrors runs on error responses too.
+   */
+  headerOnly?: boolean;
 }
 
 /**
@@ -322,11 +335,18 @@ export function convertResponseToPreviousVersionFor(
     const path = pathOrFirstSchema;
     const methods = new Set(methodsOrSecondSchema.map((m: string) => m.toUpperCase()));
 
-    // Check for options in rest
-    let migrateHttpErrors = false;
+    // Check for options in rest. Default: TRUE — response migrations apply
+    // to error responses by default, matching Stripe's versioning semantics.
+    // Pass { migrateHttpErrors: false } to opt out for migrations that only
+    // touch success-response shapes.
+    let migrateHttpErrors = true;
+    let headerOnly = false;
     for (const arg of rest) {
       if (arg && typeof arg === "object" && "migrateHttpErrors" in arg) {
-        migrateHttpErrors = arg.migrateHttpErrors ?? false;
+        migrateHttpErrors = arg.migrateHttpErrors ?? true;
+      }
+      if (arg && typeof arg === "object" && "headerOnly" in arg) {
+        headerOnly = arg.headerOnly ?? false;
       }
     }
 
@@ -345,6 +365,7 @@ export function convertResponseToPreviousVersionFor(
           transformer: (response: ResponseInfo) => originalMethod.call(targetOrTransformer, response),
           methodName: String(propertyKeyOrUndefined),
           migrateHttpErrors,
+          headerOnly,
         };
         descriptorOrUndefined.value = instruction;
         return descriptorOrUndefined;
@@ -359,6 +380,7 @@ export function convertResponseToPreviousVersionFor(
         transformer,
         methodName: transformer.name || "anonymous",
         migrateHttpErrors,
+        headerOnly,
       };
       return instruction;
     };
@@ -385,8 +407,14 @@ export function convertResponseToPreviousVersionFor(
     }
   }
 
-  const migrateHttpErrors = options.migrateHttpErrors !== undefined ? options.migrateHttpErrors : false;
+  // Default: TRUE — response migrations apply to error responses by default.
+  // Stripe-style versioning: error envelopes drift across versions and clients
+  // pinned to older versions see their version's error shape. Pass
+  // { migrateHttpErrors: false } for migrations that should only affect
+  // success-response bodies.
+  const migrateHttpErrors = options.migrateHttpErrors !== undefined ? options.migrateHttpErrors : true;
   const checkUsage = options.checkUsage !== undefined ? options.checkUsage : true;
+  const headerOnly = options.headerOnly ?? false;
 
   const schemaNames = schemas.map((s) => {
     const name = _getSchemaName(s);
@@ -411,6 +439,7 @@ export function convertResponseToPreviousVersionFor(
         methodName: String(propertyKeyOrUndefined),
         migrateHttpErrors,
         checkUsage,
+        headerOnly,
       };
       descriptorOrUndefined.value = instruction;
       return descriptorOrUndefined;
@@ -425,6 +454,7 @@ export function convertResponseToPreviousVersionFor(
       methodName: transformer.name || "anonymous",
       migrateHttpErrors,
       checkUsage,
+      headerOnly,
     };
     return instruction;
   };

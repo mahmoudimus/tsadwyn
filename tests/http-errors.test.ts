@@ -141,7 +141,10 @@ describe("HTTPException response migration", () => {
         schema(SuccessResponse2).field("field").had({ name: "old_field" }),
       ];
 
-      r1 = convertResponseToPreviousVersionFor(SuccessResponse2)(
+      // Explicit opt-out: migrateHttpErrors defaults to TRUE now (Stripe
+      // semantics). Pass false when the migration should only touch
+      // success-response bodies.
+      r1 = convertResponseToPreviousVersionFor(SuccessResponse2, { migrateHttpErrors: false })(
         (res: ResponseInfo) => {
           if (res.body.field !== undefined) {
             res.body.old_field = res.body.field;

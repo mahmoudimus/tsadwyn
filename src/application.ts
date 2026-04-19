@@ -20,11 +20,61 @@ import { ZodSchemaRegistry, generateVersionedSchemas } from "./schema-generation
 import { renderDocsDashboard, renderSwaggerUI, renderRedocUI, DEFAULT_ASSET_URLS } from "./docs.js";
 import type { DocsAssetUrls } from "./docs.js";
 import { RootTsadwynRouter } from "./routing.js";
+import {
+  detectRouteShadows,
+  reportRouteShadows,
+  type RouteShadowingPolicy,
+  type RouteShadowingLogger,
+} from "./route-shadowing.js";
+import { requestContextStorage } from "./request-context.js";
+import { getSchemaName } from "./zod-extend.js";
 
 /**
  * Regex for validating ISO date strings (YYYY-MM-DD).
  */
 const _ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Module-scoped registry of Tsadwyn instances that asked for shutdown
+ * handling. On SIGTERM / SIGINT we drain all of them in parallel and
+ * then exit, rather than letting each instance attach its own process
+ * listener (which leaks listeners across instances in test suites and
+ * multi-tenant deployments — Node emits MaxListenersExceededWarning at
+ * ~11 and the shared exit step races between the per-instance handlers).
+ *
+ * Instances are registered on construction when an `onShutdown` hook is
+ * supplied and unregistered via `Tsadwyn#close()` (useful for test
+ * teardowns). The process listener itself is installed exactly once
+ * across the whole process lifetime.
+ */
+const _tsadwynActiveInstances = new Set<Tsadwyn>();
+let _tsadwynSignalHandlerInstalled = false;
+
+function _installTsadwynSignalHandlerOnce(): void {
+  if (_tsadwynSignalHandlerInstalled) return;
+  _tsadwynSignalHandlerInstalled = true;
+  const handler = () => {
+    const toDrain = [..._tsadwynActiveInstances];
+    if (toDrain.length === 0) {
+      process.exit(0);
+      return;
+    }
+    const pending = toDrain.map((inst) => {
+      try {
+        const result = inst._runOnShutdownHook();
+        return Promise.resolve(result);
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    });
+    Promise.allSettled(pending).then((results) => {
+      const anyFailed = results.some((r) => r.status === "rejected");
+      process.exit(anyFailed ? 1 : 0);
+    });
+  };
+  process.on("SIGTERM", handler);
+  process.on("SIGINT", handler);
+}
 
 /**
  * Check if a string is a valid ISO date (YYYY-MM-DD) that represents a real calendar date.
@@ -76,6 +126,25 @@ export interface TsadwynOptions {
    * The middleware should set version information for downstream use.
    */
   versioningMiddleware?: (req: Request, res: Response, next: NextFunction) => void;
+
+  /**
+   * Consumer middleware that runs BEFORE versionPickingMiddleware. Useful for
+   * authentication or other request enrichment that must happen before the
+   * default-version resolver runs — e.g., an `apiVersionDefaultValue`
+   * implemented via `perClientDefaultVersion()` needs `req.user` to be
+   * populated by upstream auth.
+   *
+   * Scope: only runs for requests that will reach versioned dispatch — utility
+   * endpoints (OpenAPI JSON, docs, redoc, changelog) bypass this hook.
+   *
+   * Mutually exclusive with `versioningMiddleware`. The constructor throws
+   * `TsadwynStructureError` if both are supplied (when you own the full
+   * picker, there's no built-in pick to run before).
+   *
+   * Inside this middleware, `apiVersionStorage.getStore()` is undefined —
+   * the version hasn't been resolved yet.
+   */
+  preVersionPick?: (req: Request, res: Response, next: NextFunction) => void;
 
   /** Application title used in OpenAPI docs. */
   title?: string;
@@ -137,6 +206,61 @@ export interface TsadwynOptions {
    * Default: false
    */
   separateInputOutputSchemas?: boolean;
+
+  /**
+   * Pure function invoked inside each versioned handler's catch block BEFORE
+   * tsadwyn's HTTP-likeness check. Lets consumers translate domain exceptions
+   * (which don't carry HTTP semantics) into `HttpError` so they flow through
+   * the response-migration pipeline.
+   *
+   * Return `HttpError` to short-circuit the handler with that status + body.
+   * Return `null` to preserve the existing `next(err)` fall-through. A
+   * throwing mapper does NOT crash tsadwyn — the original error is passed
+   * to `next(err)` and Express's default error handler takes over (500).
+   *
+   * Pairs with `exceptionMap()` for a declarative, introspectable map form.
+   */
+  errorMapper?: (err: unknown) => import("./exceptions.js").HttpError | null;
+
+  /**
+   * Policy applied when an incoming `X-Api-Version` header doesn't match
+   * any value in the `VersionBundle`. Delegated to `versionPickingMiddleware`.
+   *
+   *   - `'reject'`      — respond 400 with `{error: 'unsupported_api_version',
+   *                        sent, supported}` immediately. Stripe-style.
+   *   - `'fallback'`    — substitute `apiVersionDefaultValue` and emit a
+   *                        structured warn via `versionPickingLogger`.
+   *   - `'passthrough'` (default) — store the verbatim string and let the
+   *                        downstream dispatcher 422 it. Preserves
+   *                        historical behavior.
+   */
+  onUnsupportedVersion?: "reject" | "fallback" | "passthrough";
+
+  /**
+   * Structured logger passed to `versionPickingMiddleware` — used when
+   * `onUnsupportedVersion: 'fallback'` substitutes the default version.
+   */
+  versionPickingLogger?: {
+    warn: (ctx: Record<string, unknown>, msg: string) => void;
+  };
+
+  /**
+   * Policy applied when a parameterized route (e.g. `/users/:id`) is
+   * registered before a literal route it would shadow (e.g. `/users/search`).
+   * path-to-regexp is first-match-wins, so the literal path never receives
+   * traffic — an easy and costly production bug.
+   *
+   *   - `'warn'` (default) — emit one log line per shadow via
+   *                          `routeShadowingLogger` or `console.warn`.
+   *   - `'throw'`          — surface as `TsadwynStructureError` during
+   *                          `generateAndIncludeVersionedRouters()`. Best
+   *                          for CI enforcement on new apps.
+   *   - `'silent'`         — suppress the diagnostic entirely.
+   */
+  onRouteShadowing?: RouteShadowingPolicy;
+
+  /** Structured logger used for route-shadowing warns. */
+  routeShadowingLogger?: RouteShadowingLogger;
 }
 
 /**
@@ -217,6 +341,26 @@ export class Tsadwyn {
   /** T-2203: Separate input/output schemas flag. */
   separateInputOutputSchemas: boolean;
 
+  /** Domain exception → HttpError translator. Invoked in handler catch blocks. */
+  _errorMapper: ((err: unknown) => import("./exceptions.js").HttpError | null) | null;
+
+  /**
+   * Policy for shadowed-route diagnostic:
+   *   - 'warn' (default): emit one log line per shadow via `routeShadowingLogger` or console.warn
+   *   - 'throw': refuse to initialize; `TsadwynStructureError` is thrown
+   *   - 'silent': no-op (suppress all shadow reporting)
+   */
+  _onRouteShadowing: RouteShadowingPolicy;
+  /** Structured logger for route-shadowing warns. Ignored when policy !== 'warn'. */
+  _routeShadowingLogger: RouteShadowingLogger | undefined;
+
+  /** Policy for unknown `X-Api-Version` header values. */
+  _onUnsupportedVersion: "reject" | "fallback" | "passthrough" | undefined;
+  /** Structured logger used by `versionPickingMiddleware`. */
+  _versionPickingLogger:
+    | { warn: (ctx: Record<string, unknown>, msg: string) => void }
+    | undefined;
+
   /**
    * Access the internal versioned routers map.
    * Used by the CLI and for introspection.
@@ -265,6 +409,17 @@ export class Tsadwyn {
     // T-2203: Separate input/output schemas
     this.separateInputOutputSchemas = options.separateInputOutputSchemas ?? false;
 
+    // Error mapper (domain exceptions → HttpError inside handler catch blocks)
+    this._errorMapper = options.errorMapper ?? null;
+
+    // Route-shadowing diagnostic policy (default: warn)
+    this._onRouteShadowing = options.onRouteShadowing ?? "warn";
+    this._routeShadowingLogger = options.routeShadowingLogger;
+
+    // Unsupported-version header policy (default: passthrough — historical)
+    this._onUnsupportedVersion = options.onUnsupportedVersion;
+    this._versionPickingLogger = options.versionPickingLogger;
+
     // T-1003: Validate version format and ordering
     this._validateVersionFormat();
 
@@ -296,34 +451,90 @@ export class Tsadwyn {
     this.expressApp = express();
     this.expressApp.use(express.json());
 
+    // Mutual-exclusion check: preVersionPick only makes sense when the
+    // built-in picker is in use; versioningMiddleware is a full override.
+    if (options.preVersionPick && this._customVersioningMiddleware) {
+      throw new TsadwynStructureError(
+        "preVersionPick cannot be combined with versioningMiddleware. " +
+          "When you supply a full versioningMiddleware override, it replaces " +
+          "the built-in version picker entirely — there's no built-in pick to " +
+          "run before. Merge your preVersionPick logic into the custom " +
+          "versioningMiddleware instead.",
+      );
+    }
+
     // Set up version picking middleware
     if (this._customVersioningMiddleware) {
       this.expressApp.use(this._customVersioningMiddleware);
     } else {
+      // preVersionPick (if supplied) runs BEFORE versionPickingMiddleware so
+      // async enrichment (auth, tenant resolution) happens before the
+      // default-version resolver. Utility endpoints (OpenAPI, docs) are
+      // excluded via path-check — they read version from query/header
+      // directly and don't need the hook.
+      if (options.preVersionPick) {
+        const preHook = options.preVersionPick;
+        const utilityPaths = [
+          this.openApiUrl,
+          this.docsUrl,
+          this.redocUrl,
+          this.changelogUrl,
+        ].filter((p): p is string => typeof p === "string");
+        this.expressApp.use((req: Request, res: Response, next: NextFunction) => {
+          const path = req.path;
+          if (
+            utilityPaths.some(
+              (p) => path === p || path.startsWith(p + "/"),
+            )
+          ) {
+            return next();
+          }
+          preHook(req, res, next);
+        });
+      }
       const pickingOpts: VersionPickingOptions = {
         headerName: this.apiVersionHeaderName,
         apiVersionLocation: this.apiVersionLocation,
         apiVersionDefaultValue: this.apiVersionDefaultValue,
         versionValues: this.versions.versionValues,
       };
+      if (this._onUnsupportedVersion !== undefined) {
+        pickingOpts.onUnsupportedVersion = this._onUnsupportedVersion;
+      }
+      if (this._versionPickingLogger) {
+        pickingOpts.logger = this._versionPickingLogger;
+      }
       this.expressApp.use(versionPickingMiddleware(pickingOpts));
     }
 
     this._mountUtilityEndpoints();
 
-    // T-2202: Register shutdown hooks
+    // T-2202: Register shutdown hooks. Uses a module-scoped instance set
+    // + a single shared SIGTERM/SIGINT handler so listener count doesn't
+    // grow with instance count.
     if (this._onShutdown) {
-      const shutdownHandler = () => {
-        const result = this._onShutdown!();
-        if (result && typeof (result as Promise<void>).then === "function") {
-          (result as Promise<void>).then(() => process.exit(0)).catch(() => process.exit(1));
-        } else {
-          process.exit(0);
-        }
-      };
-      process.on("SIGTERM", shutdownHandler);
-      process.on("SIGINT", shutdownHandler);
+      _tsadwynActiveInstances.add(this);
+      _installTsadwynSignalHandlerOnce();
     }
+  }
+
+  /**
+   * Runs the configured `onShutdown` hook. Public-internal helper used
+   * by the shared signal handler — you don't normally call this from
+   * consumer code.
+   */
+  _runOnShutdownHook(): void | Promise<void> {
+    if (!this._onShutdown) return;
+    return this._onShutdown();
+  }
+
+  /**
+   * Deregister this instance from the module-scoped shutdown set. Call
+   * from test teardowns so subsequent test instances don't share
+   * shutdown callbacks with this one. Safe to call multiple times.
+   */
+  close(): void {
+    _tsadwynActiveInstances.delete(this);
   }
 
   /**
@@ -467,29 +678,45 @@ export class Tsadwyn {
 
   /**
    * Wrap a route handler to check dependencyOverrides before calling.
+   * Captures the raw Express Request into `requestContextStorage` so
+   * handlers (and any awaited helpers) can call `currentRequest()`
+   * identically on versioned + unversioned routes — the versioned
+   * dispatcher in route-generation.ts does the same wrap.
    */
   private _wrapHandlerWithOverrides(routeDef: RouteDefinition): (req: Request, res: Response, next: NextFunction) => void {
     const successStatus = routeDef.statusCode ?? 200;
-    return async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const effectiveHandler = this.dependencyOverrides.get(routeDef.handler) as
-          | typeof routeDef.handler
-          | undefined;
-        const handler = effectiveHandler || routeDef.handler;
-
-        const handlerReq = {
-          body: req.body,
-          params: req.params,
-          query: req.query,
-          headers: req.headers,
-        };
-
-        const result = await handler(handlerReq);
-        res.status(successStatus).json(result);
-      } catch (err) {
-        next(err);
-      }
+    return (req: Request, res: Response, next: NextFunction) => {
+      requestContextStorage.run(req, () => {
+        void this._dispatchUnversionedHandler(routeDef, successStatus, req, res, next);
+      });
     };
+  }
+
+  private async _dispatchUnversionedHandler(
+    routeDef: RouteDefinition,
+    successStatus: number,
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      const effectiveHandler = this.dependencyOverrides.get(routeDef.handler) as
+        | typeof routeDef.handler
+        | undefined;
+      const handler = effectiveHandler || routeDef.handler;
+
+      const handlerReq = {
+        body: req.body,
+        params: req.params,
+        query: req.query,
+        headers: req.headers,
+      };
+
+      const result = await handler(handlerReq);
+      res.status(successStatus).json(result);
+    } catch (err) {
+      next(err);
+    }
   }
 
   /**
@@ -511,11 +738,17 @@ export class Tsadwyn {
     // Store routes for OpenAPI generation
     this._routes = mergedRouter.routes;
 
+    // Scan for route-shadowing before binding — catches :id-then-literal
+    // mistakes while the user can still see them. Policy governs severity.
+    const shadows = detectRouteShadows(mergedRouter.routes);
+    reportRouteShadows(shadows, this._onRouteShadowing, this._routeShadowingLogger);
+
     const generatedRouters = generateVersionedRouters(
       mergedRouter,
       this.versions,
       this.dependencyOverrides,
       this.webhooks.routes.length > 0 ? this.webhooks.routes : undefined,
+      this._errorMapper ?? undefined,
     );
 
     // Store per-version routes for OpenAPI generation
@@ -540,9 +773,17 @@ export class Tsadwyn {
     this._initialized = true;
     this._pendingRouters = null;
 
-    // T-2202: Call onStartup hook at the end of initialization
+    // T-2202: Call onStartup hook at the end of initialization.
+    // Wrap via Promise.resolve so a sync-throwing or async-rejecting hook
+    // doesn't escape as an unhandled rejection (which Node 20+ terminates
+    // the process on by default). Matches onShutdown's handling below.
     if (this._onStartup) {
-      this._onStartup();
+      Promise.resolve()
+        .then(() => this._onStartup!())
+        .catch((err: unknown) => {
+          // eslint-disable-next-line no-console
+          console.error("[tsadwyn] onStartup hook rejected:", err);
+        });
     }
   }
 
@@ -708,21 +949,24 @@ export class Tsadwyn {
 
   /**
    * Build a ZodSchemaRegistry from route definitions.
+   *
+   * Goes through `getSchemaName()` rather than reading `._tsadwynName`
+   * directly. The direct-property path silently drops schemas when the
+   * legacy prop is absent (e.g., a downstream serializer that cleared
+   * non-enumerable properties) — `getSchemaName` also falls back to the
+   * WeakMap registry so the canonical schema→name binding is honored
+   * wherever it lives. CLAUDE.md states this invariant explicitly.
    */
   private _buildRegistryFromRoutes(routes: RouteDefinition[]): ZodSchemaRegistry {
     const registry = new ZodSchemaRegistry();
     for (const route of routes) {
-      if (route.requestSchema && (route.requestSchema as any)._tsadwynName) {
-        registry.register(
-          (route.requestSchema as any)._tsadwynName,
-          route.requestSchema,
-        );
+      const reqName = getSchemaName(route.requestSchema);
+      if (route.requestSchema && reqName) {
+        registry.register(reqName, route.requestSchema);
       }
-      if (route.responseSchema && (route.responseSchema as any)._tsadwynName) {
-        registry.register(
-          (route.responseSchema as any)._tsadwynName,
-          route.responseSchema,
-        );
+      const resName = getSchemaName(route.responseSchema);
+      if (route.responseSchema && resName) {
+        registry.register(resName, route.responseSchema);
       }
     }
 

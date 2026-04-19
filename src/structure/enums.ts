@@ -1,5 +1,6 @@
 import type { HiddenFromChangelogMixin } from "./schemas.js";
 import { z, ZodEnum, ZodNativeEnum } from "zod";
+import { getSchemaName } from "../zod-extend.js";
 
 /**
  * A named Zod enum schema reference.
@@ -92,7 +93,7 @@ export class EnumInstructionFactory {
 export function enum_(
   zodEnum: (ZodEnum<any> | ZodNativeEnum<any>) & { _tsadwynName?: string },
 ): EnumInstructionFactory {
-  const name = zodEnum._tsadwynName;
+  const name = getSchemaName(zodEnum);
   if (!name) {
     throw new Error(
       "Enum schema must have a name. Use `.named('EnumName')` on the Zod enum schema.",

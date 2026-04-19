@@ -29,6 +29,20 @@ export interface VersionPickingOptions {
   apiVersionLocation: APIVersionLocation;
   apiVersionDefaultValue: string | ((req: Request) => string | Promise<string>) | null;
   versionValues: string[];
+  /**
+   * Policy for handling an `X-Api-Version` header whose value isn't in
+   * `versionValues`. Default: `'passthrough'` (store the string verbatim so
+   * the downstream dispatcher can decide what to do — preserves current behavior).
+   *
+   * - `'reject'`      — respond 400 with `{error: 'unsupported_api_version', sent, supported}`.
+   * - `'fallback'`    — substitute `apiVersionDefaultValue` and emit a warn (if logger supplied).
+   * - `'passthrough'` — store verbatim. Current behavior.
+   */
+  onUnsupportedVersion?: "reject" | "fallback" | "passthrough";
+  /** Optional logger used for `fallback`-mode warns. */
+  logger?: {
+    warn: (ctx: Record<string, unknown>, msg: string) => void;
+  };
 }
 
 /**
@@ -96,11 +110,54 @@ export function versionPickingMiddleware(
 
     // Apply default value if no version found
     if (version === undefined && opts.apiVersionDefaultValue !== null) {
-      if (typeof opts.apiVersionDefaultValue === "function") {
-        version = await opts.apiVersionDefaultValue(req);
-      } else if (typeof opts.apiVersionDefaultValue === "string") {
-        version = opts.apiVersionDefaultValue;
+      try {
+        if (typeof opts.apiVersionDefaultValue === "function") {
+          version = await opts.apiVersionDefaultValue(req);
+        } else if (typeof opts.apiVersionDefaultValue === "string") {
+          version = opts.apiVersionDefaultValue;
+        }
+      } catch (err) {
+        next(err);
+        return;
       }
+    }
+
+    // onUnsupportedVersion policy check: if an explicit/default version was
+    // resolved but it isn't in versionValues, apply the configured policy.
+    if (
+      version !== undefined &&
+      version !== null &&
+      opts.versionValues.length > 0 &&
+      !opts.versionValues.includes(version)
+    ) {
+      const policy = opts.onUnsupportedVersion ?? "passthrough";
+      if (policy === "reject") {
+        res.status(400).json({
+          error: "unsupported_api_version",
+          sent: version,
+          supported: opts.versionValues,
+        });
+        return;
+      }
+      if (policy === "fallback") {
+        opts.logger?.warn(
+          { sent: version, supported: opts.versionValues },
+          `Unsupported API version "${version}"; falling back to default.`,
+        );
+        try {
+          if (typeof opts.apiVersionDefaultValue === "function") {
+            version = await opts.apiVersionDefaultValue(req);
+          } else if (typeof opts.apiVersionDefaultValue === "string") {
+            version = opts.apiVersionDefaultValue;
+          } else {
+            version = undefined;
+          }
+        } catch (err) {
+          next(err);
+          return;
+        }
+      }
+      // passthrough: leave version as-is so the downstream dispatcher handles it
     }
 
     const versionValue = version || null;

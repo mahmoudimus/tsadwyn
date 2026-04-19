@@ -6,3 +6,13 @@ coverage/
 coverage-cli/
 CLAUDE.md
 _gitless/
+
+# Design specs and brainstorming artifacts are kept local-only.
+# The repo holds runnable code + tests + docs meant for publication;
+# per-issue design specs and superpowers/ scratchpads live adjacent
+# to the code but aren't part of the published history.
+docs/superpowers/
+tsadwyn-issue-*.md
+tsadwyn-issues-*.md
+consumer-integration-followups.md
+migrate-to-latest.md

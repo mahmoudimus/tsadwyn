@@ -82,8 +82,14 @@ function createApp() {
 
     @convertResponseToPreviousVersionFor(UserResource)
     changeAddressesToSingleItem(response: ResponseInfo) {
-      response.body.address = response.body.addresses[0];
-      delete response.body.addresses;
+      // With migrateHttpErrors defaulting to true (Stripe semantics), this
+      // migration can fire on 422 validation errors whose body is
+      // {detail: [...]} rather than a UserResource. Null-check the shape
+      // before mutating.
+      if (response.body?.addresses) {
+        response.body.address = response.body.addresses[0];
+        delete response.body.addresses;
+      }
     }
   }
 
