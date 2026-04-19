@@ -33,6 +33,48 @@ import {
 const _ISO_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
+ * Module-scoped registry of Tsadwyn instances that asked for shutdown
+ * handling. On SIGTERM / SIGINT we drain all of them in parallel and
+ * then exit, rather than letting each instance attach its own process
+ * listener (which leaks listeners across instances in test suites and
+ * multi-tenant deployments — Node emits MaxListenersExceededWarning at
+ * ~11 and the shared exit step races between the per-instance handlers).
+ *
+ * Instances are registered on construction when an `onShutdown` hook is
+ * supplied and unregistered via `Tsadwyn#close()` (useful for test
+ * teardowns). The process listener itself is installed exactly once
+ * across the whole process lifetime.
+ */
+const _tsadwynActiveInstances = new Set<Tsadwyn>();
+let _tsadwynSignalHandlerInstalled = false;
+
+function _installTsadwynSignalHandlerOnce(): void {
+  if (_tsadwynSignalHandlerInstalled) return;
+  _tsadwynSignalHandlerInstalled = true;
+  const handler = () => {
+    const toDrain = [..._tsadwynActiveInstances];
+    if (toDrain.length === 0) {
+      process.exit(0);
+      return;
+    }
+    const pending = toDrain.map((inst) => {
+      try {
+        const result = inst._runOnShutdownHook();
+        return Promise.resolve(result);
+      } catch (err) {
+        return Promise.reject(err);
+      }
+    });
+    Promise.allSettled(pending).then((results) => {
+      const anyFailed = results.some((r) => r.status === "rejected");
+      process.exit(anyFailed ? 1 : 0);
+    });
+  };
+  process.on("SIGTERM", handler);
+  process.on("SIGINT", handler);
+}
+
+/**
  * Check if a string is a valid ISO date (YYYY-MM-DD) that represents a real calendar date.
  */
 function _isValidISODate(value: string): boolean {
@@ -465,19 +507,32 @@ export class Tsadwyn {
 
     this._mountUtilityEndpoints();
 
-    // T-2202: Register shutdown hooks
+    // T-2202: Register shutdown hooks. Uses a module-scoped instance set
+    // + a single shared SIGTERM/SIGINT handler so listener count doesn't
+    // grow with instance count.
     if (this._onShutdown) {
-      const shutdownHandler = () => {
-        const result = this._onShutdown!();
-        if (result && typeof (result as Promise<void>).then === "function") {
-          (result as Promise<void>).then(() => process.exit(0)).catch(() => process.exit(1));
-        } else {
-          process.exit(0);
-        }
-      };
-      process.on("SIGTERM", shutdownHandler);
-      process.on("SIGINT", shutdownHandler);
+      _tsadwynActiveInstances.add(this);
+      _installTsadwynSignalHandlerOnce();
     }
+  }
+
+  /**
+   * Runs the configured `onShutdown` hook. Public-internal helper used
+   * by the shared signal handler — you don't normally call this from
+   * consumer code.
+   */
+  _runOnShutdownHook(): void | Promise<void> {
+    if (!this._onShutdown) return;
+    return this._onShutdown();
+  }
+
+  /**
+   * Deregister this instance from the module-scoped shutdown set. Call
+   * from test teardowns so subsequent test instances don't share
+   * shutdown callbacks with this one. Safe to call multiple times.
+   */
+  close(): void {
+    _tsadwynActiveInstances.delete(this);
   }
 
   /**

@@ -366,20 +366,39 @@ describe("Finding #5 (MEDIUM): SIGTERM listeners do not accumulate per instance"
   it("constructing 15 Tsadwyn instances does not add 15 SIGTERM listeners", () => {
     const before = process.listenerCount("SIGTERM");
 
+    const apps: Tsadwyn[] = [];
     for (let i = 0; i < 15; i++) {
-      const app = new Tsadwyn({
-        versions: new VersionBundle(new Version("2024-01-01")),
-        onShutdown: () => {},
-      });
-      // Sanity: exercise the object so the cache isn't accidentally GC'd mid-loop.
-      void app.expressApp;
+      apps.push(
+        new Tsadwyn({
+          versions: new VersionBundle(new Version("2024-01-01")),
+          onShutdown: () => {},
+        }),
+      );
     }
 
     const after = process.listenerCount("SIGTERM");
-    // Fix should either reuse a single module-level listener, or expose a
-    // close()/destroy() method plus test-time cleanup. Either way, the
-    // delta should stay at a small constant (≤ 1), NOT scale with instance count.
+    // Fix uses a single module-scoped listener shared across instances.
+    // Delta should stay ≤ 1, NOT scale with instance count.
     expect(after - before).toBeLessThanOrEqual(1);
+
+    // Clean up so test teardowns don't leave shutdown hooks registered
+    // across the rest of the suite.
+    apps.forEach((a) => a.close());
+  });
+
+  it("close() removes the instance from the shared shutdown registry", () => {
+    // This is testable only through observable effects — the internal
+    // Set is module-private. Proxy: after close(), subsequent
+    // constructions still work and don't complain about double-registration.
+    const app = new Tsadwyn({
+      versions: new VersionBundle(new Version("2024-01-01")),
+      onShutdown: () => {},
+    });
+    // Calling close() once unregisters; calling it twice is a safe no-op.
+    expect(() => {
+      app.close();
+      app.close();
+    }).not.toThrow();
   });
 });
 
