@@ -80,66 +80,112 @@ describe("Finding #1 (HIGH): onStartup async rejection handling", () => {
 
 // ────────────────────────────────────────────────────────────────────────────
 // 🔴 HIGH #2 — migratePayloadToVersion skips path-based response migrations
-// Location: src/migrate-payload.ts:55-62
-// Bug: the function only iterates `_alterResponseBySchemaInstructions`.
+// Location: src/migrate-payload.ts:55-62 (pre-fix)
+// Bug: the function only iterated `_alterResponseBySchemaInstructions`.
 // Any migration registered via `convertResponseToPreviousVersionFor(path,
-// methods)` is silently skipped when a consumer calls migratePayloadToVersion
+// methods)` was silently skipped when a consumer called migratePayloadToVersion
 // for outbound webhooks/events — resulting in unmigrated payloads reaching
 // older clients with no error.
+//
+// Fix: add optional `opts.path` + `opts.methods` so callers can address
+// path-based migrations. Path-based migrations are opt-in (the function
+// doesn't know which path a raw payload would have come from unless told).
+// Without opts.path, the old schema-only behavior is preserved and
+// documented.
 // ────────────────────────────────────────────────────────────────────────────
 describe("Finding #2 (HIGH): migratePayloadToVersion applies path-based migrations", () => {
-  it("transforms the payload when only a path-based migration exists", () => {
-    const WebhookEvent = z
-      .object({
-        id: z.string(),
-        event_type: z.string(),
-        amount: z.number(),
-      })
-      .named("Finding2_WebhookEvent");
+  // Shared setup extracted so both branches exercise the same VersionBundle
+  // + migration registration. Declaring the classes inside the outer scope
+  // keeps tsadwyn's "VersionChange is bound to one bundle for life" (T-1602)
+  // contract intact — one bundle, shared across describes in one test run.
+  const WebhookEvent = z
+    .object({
+      id: z.string(),
+      event_type: z.string(),
+      amount: z.number(),
+    })
+    .named("Finding2_WebhookEvent");
 
-    class RenameEventType extends VersionChange {
-      description = "renames event_type → type on older version (path-based)";
-      instructions = [];
+  class RenameEventType extends VersionChange {
+    description = "renames event_type → type on older version (path-based)";
+    instructions = [];
 
-      // Path-based registration: consumer keyed on the route, not the schema.
-      migrateWebhook = convertResponseToPreviousVersionFor("/webhooks/events", ["POST"])(
-        (response: ResponseInfo) => {
-          if (response.body && typeof response.body === "object") {
-            response.body.type = response.body.event_type;
-            delete response.body.event_type;
-          }
-        },
-      );
-    }
-
-    const router = new VersionedRouter();
-    router.post("/webhooks/events", WebhookEvent, WebhookEvent, async () => ({
-      id: "evt_1",
-      event_type: "charge.succeeded",
-      amount: 100,
-    }));
-
-    const versions = new VersionBundle(
-      new Version("2025-06-01", RenameEventType),
-      new Version("2024-01-01"),
+    // Path-based registration: consumer keyed on the route, not the schema.
+    migrateWebhook = convertResponseToPreviousVersionFor("/webhooks/events", ["POST"])(
+      (response: ResponseInfo) => {
+        if (response.body && typeof response.body === "object") {
+          response.body.type = response.body.event_type;
+          delete response.body.event_type;
+        }
+      },
     );
+  }
 
-    const head = {
-      id: "evt_1",
-      event_type: "charge.succeeded",
-      amount: 100,
-    };
+  const router = new VersionedRouter();
+  router.post("/webhooks/events", WebhookEvent, WebhookEvent, async () => ({
+    id: "evt_1",
+    event_type: "charge.succeeded",
+    amount: 100,
+  }));
+
+  const versions = new VersionBundle(
+    new Version("2025-06-01", RenameEventType),
+    new Version("2024-01-01"),
+  );
+
+  const head = () => ({
+    id: "evt_1",
+    event_type: "charge.succeeded",
+    amount: 100,
+  });
+
+  it("applies the path-based migration when opts.path is supplied", () => {
     const migrated = migratePayloadToVersion(
       "Finding2_WebhookEvent",
-      head,
+      head(),
+      "2024-01-01",
+      versions,
+      { path: "/webhooks/events", methods: ["POST"] },
+    );
+
+    expect(migrated).toEqual({
+      id: "evt_1",
+      type: "charge.succeeded",
+      amount: 100,
+    });
+  });
+
+  it("skips path-based migrations when opts.path is omitted (documented behavior)", () => {
+    // Without opts.path, the function has no way to know which path-based
+    // migrations apply to the caller's raw payload, so it skips them.
+    // Callers who need path-based migrations must address them explicitly.
+    const migrated = migratePayloadToVersion(
+      "Finding2_WebhookEvent",
+      head(),
       "2024-01-01",
       versions,
     );
 
-    // The path-based migration SHOULD have renamed event_type → type.
+    // Unchanged — path-based migration was not addressed.
     expect(migrated).toEqual({
       id: "evt_1",
-      type: "charge.succeeded",
+      event_type: "charge.succeeded",
+      amount: 100,
+    });
+  });
+
+  it("methods filter excludes non-matching methods on path-based migrations", () => {
+    // RenameEventType registered for ['POST']. Asking for GET → no match.
+    const migrated = migratePayloadToVersion(
+      "Finding2_WebhookEvent",
+      head(),
+      "2024-01-01",
+      versions,
+      { path: "/webhooks/events", methods: ["GET"] },
+    );
+    expect(migrated).toEqual({
+      id: "evt_1",
+      event_type: "charge.succeeded",
       amount: 100,
     });
   });
