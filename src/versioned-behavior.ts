@@ -76,7 +76,12 @@ export interface CreateVersionedBehaviorOptions<B> {
   fallback?: B;
   /** Telemetry policy for unknown-version lookups via `.get()`. */
   onUnknown?: "silent" | "warn-once" | "warn-every";
-  /** Optional structured logger. Required when `onUnknown !== 'silent'`. */
+  /**
+   * Structured logger. **Required** when `onUnknown !== 'silent'` —
+   * `createVersionedBehavior` throws `TsadwynStructureError` at
+   * construction if you ask for warnings without providing a sink.
+   * Delegated to `buildBehaviorResolver`'s enforcement.
+   */
   logger?: {
     warn: (ctx: Record<string, unknown>, msg: string) => void;
   };

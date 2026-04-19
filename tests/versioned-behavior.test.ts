@@ -306,3 +306,43 @@ describe("createVersionedBehavior — type contract", () => {
     expect(true).toBe(true);
   });
 });
+
+describe("createVersionedBehavior — logger-required enforcement", () => {
+  // createVersionedBehavior delegates telemetry to buildBehaviorResolver,
+  // so the guard on missing-logger-with-warn-* should flow through. These
+  // tests lock in that delegation so a future refactor can't accidentally
+  // reintroduce the silent-no-op footgun.
+  it("throws when onUnknown is 'warn-once' and logger is missing", () => {
+    expect(() =>
+      createVersionedBehavior<Behavior>({
+        head: HEAD,
+        initialVersion: "2024-01-01",
+        changes: [{ version: "2025-06-01", behaviorHad: { rateLimitPerSec: 100 } }],
+        onUnknown: "warn-once",
+      }),
+    ).toThrow(/requires a logger/i);
+  });
+
+  it("throws when onUnknown is 'warn-every' and logger is missing", () => {
+    expect(() =>
+      createVersionedBehavior<Behavior>({
+        head: HEAD,
+        initialVersion: "2024-01-01",
+        changes: [{ version: "2025-06-01", behaviorHad: { rateLimitPerSec: 100 } }],
+        onUnknown: "warn-every",
+      }),
+    ).toThrow(/requires a logger/i);
+  });
+
+  it("does not throw when onUnknown is 'warn-once' and logger IS provided", () => {
+    expect(() =>
+      createVersionedBehavior<Behavior>({
+        head: HEAD,
+        initialVersion: "2024-01-01",
+        changes: [{ version: "2025-06-01", behaviorHad: { rateLimitPerSec: 100 } }],
+        onUnknown: "warn-once",
+        logger: { warn: () => {} },
+      }),
+    ).not.toThrow();
+  });
+});

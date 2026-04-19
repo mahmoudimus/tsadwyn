@@ -5,6 +5,7 @@
  */
 
 import { apiVersionStorage } from "./middleware.js";
+import { TsadwynStructureError } from "./exceptions.js";
 
 export interface BuildBehaviorResolverOptions {
   /**
@@ -14,7 +15,13 @@ export interface BuildBehaviorResolverOptions {
    * - 'warn-every' — warn on every unknown lookup.
    */
   onUnknown?: "silent" | "warn-once" | "warn-every";
-  /** Optional structured logger. Required if `onUnknown !== 'silent'`. */
+  /**
+   * Structured logger. **Required** when `onUnknown !== 'silent'` — the
+   * builder throws at construction if you ask for warnings without
+   * providing somewhere to send them. This prevents the silent-no-op
+   * footgun where a caller opts into telemetry, forgets the logger, and
+   * wonders why no warnings appear.
+   */
   logger?: {
     warn: (ctx: Record<string, unknown>, msg: string) => void;
   };
@@ -28,6 +35,10 @@ export interface BuildBehaviorResolverOptions {
  * called inside a request scope (inside `versionPickingMiddleware.run()`).
  * When no version is in storage (e.g., unversioned paths), `fallback` is
  * returned silently regardless of `onUnknown` — absence is not an error.
+ *
+ * Throws `TsadwynStructureError` at construction if `onUnknown` is
+ * `'warn-once'` or `'warn-every'` without a `logger` — opt-in telemetry
+ * with no sink is always a bug.
  */
 export function buildBehaviorResolver<B>(
   map: ReadonlyMap<string, B>,
@@ -36,6 +47,14 @@ export function buildBehaviorResolver<B>(
 ): () => B {
   const onUnknown = opts.onUnknown ?? "silent";
   const logger = opts.logger;
+
+  if (onUnknown !== "silent" && !logger) {
+    throw new TsadwynStructureError(
+      `buildBehaviorResolver: onUnknown: "${onUnknown}" requires a logger. ` +
+        `Either pass a logger ({ warn: (ctx, msg) => void }) or set ` +
+        `onUnknown: "silent" to opt out of telemetry.`,
+    );
+  }
   const warned = new Set<string>();
   // Snapshot the supported list once for warning context. Callers that add
   // entries to the map after construction will see a stale list — documented.

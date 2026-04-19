@@ -137,3 +137,43 @@ describe("Issue: buildBehaviorResolver helper", () => {
     expect(ctx.supportedVersions).toEqual(["2024-01-01", "2025-01-01"]);
   });
 });
+
+describe("buildBehaviorResolver — logger-required enforcement", () => {
+  // Asking for warnings but providing nowhere to send them is the silent-
+  // no-op footgun we want to eliminate. Throw loudly at construction so
+  // the misconfiguration surfaces at boot, not in production when a
+  // warning quietly fails to appear.
+  it("throws when onUnknown is 'warn-once' and logger is missing", () => {
+    const map = new Map<string, Behavior>([["2024-01-01", { feature: "v1" }]]);
+    expect(() =>
+      buildBehaviorResolver(map, { feature: "head" }, {
+        onUnknown: "warn-once",
+      }),
+    ).toThrow(/requires a logger/i);
+  });
+
+  it("throws when onUnknown is 'warn-every' and logger is missing", () => {
+    const map = new Map<string, Behavior>([["2024-01-01", { feature: "v1" }]]);
+    expect(() =>
+      buildBehaviorResolver(map, { feature: "head" }, {
+        onUnknown: "warn-every",
+      }),
+    ).toThrow(/requires a logger/i);
+  });
+
+  it("does not throw when onUnknown is 'silent' and logger is missing", () => {
+    const map = new Map<string, Behavior>([["2024-01-01", { feature: "v1" }]]);
+    expect(() =>
+      buildBehaviorResolver(map, { feature: "head" }, {
+        onUnknown: "silent",
+      }),
+    ).not.toThrow();
+  });
+
+  it("does not throw when onUnknown is unspecified (defaults to 'silent')", () => {
+    const map = new Map<string, Behavior>([["2024-01-01", { feature: "v1" }]]);
+    expect(() =>
+      buildBehaviorResolver(map, { feature: "head" }),
+    ).not.toThrow();
+  });
+});
