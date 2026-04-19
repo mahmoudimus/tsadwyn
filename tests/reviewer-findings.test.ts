@@ -403,6 +403,49 @@ describe("Finding #5 (MEDIUM): SIGTERM listeners do not accumulate per instance"
 });
 
 // ────────────────────────────────────────────────────────────────────────────
+// 🟡 MEDIUM #6 — _buildRegistryFromRoutes reads `._tsadwynName` directly
+// Location: src/application.ts :: _buildRegistryFromRoutes
+// Bug: the method checks `(schema as any)._tsadwynName` directly, despite
+// CLAUDE.md's explicit "use `getSchemaName` / `setSchemaName` rather than
+// reading `._tsadwynName` directly" rule. Today this works because
+// setSchemaName writes BOTH the WeakMap AND the legacy property — but if
+// either (a) the WeakMap-only path is ever exercised, or (b) the legacy
+// property is cleared by a downstream consumer (e.g., schema cloning
+// that drops non-enumerable props), the registry silently drops the
+// schema and OpenAPI output gets broken $refs.
+//
+// Test: simulate the WeakMap-only path by deleting the legacy property
+// AFTER `.named()` set it. `getSchemaName()` falls back to the WeakMap;
+// direct `._tsadwynName` access sees `undefined` and the schema is
+// skipped. The OpenAPI output should still include the named schema.
+// ────────────────────────────────────────────────────────────────────────────
+describe("Finding #6 (MEDIUM): _buildRegistryFromRoutes uses getSchemaName, not direct property", () => {
+  it("includes the schema in OpenAPI components when ._tsadwynName is absent but WeakMap has it", () => {
+    const MySchema = z
+      .object({ x: z.string() })
+      .named("Finding6_MySchema");
+
+    // Simulate the WeakMap-only path: the name was set via the canonical
+    // API (so it's in the WeakMap), but a downstream transform or serializer
+    // cleared the legacy property. With direct `._tsadwynName` access the
+    // schema is dropped; with `getSchemaName()` it's found via the WeakMap.
+    delete (MySchema as unknown as Record<string, unknown>)._tsadwynName;
+
+    const router = new VersionedRouter();
+    router.get("/x", null, MySchema, async () => ({ x: "ok" }));
+
+    const app = new Tsadwyn({
+      versions: new VersionBundle(new Version("2024-01-01")),
+    });
+    app.generateAndIncludeVersionedRouters(router);
+
+    const doc = app.openapi("2024-01-01");
+    expect(doc.components?.schemas).toBeDefined();
+    expect(Object.keys(doc.components!.schemas!)).toContain("Finding6_MySchema");
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
 // 🟡 MEDIUM #7 — currentRequest() silently broken on unversioned routes
 // Location: src/application.ts `_wrapHandlerWithOverrides` (lines 586-608)
 // Bug: Versioned route dispatch wraps the handler body in

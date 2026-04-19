@@ -3,6 +3,7 @@ import { zodToJsonSchema } from "zod-to-json-schema";
 import type { RouteDefinition } from "./router.js";
 import type { VersionBundle } from "./structure/versions.js";
 import type { ZodSchemaRegistry } from "./schema-generation.js";
+import { getSchemaName as _getSchemaName } from "./zod-extend.js";
 
 /**
  * OpenAPI 3.1.0 document shape (simplified).
@@ -49,11 +50,12 @@ export interface OpenAPIBuildOptions {
 }
 
 /**
- * Get a schema name from a ZodTypeAny if it has a _tsadwynName.
+ * Local indirection so the OpenAPI builder accepts the narrower
+ * `ZodTypeAny | null` shape it uses at callsites, while the underlying
+ * resolution goes through the canonical WeakMap-backed helper.
  */
 function getSchemaName(schema: ZodTypeAny | null): string | null {
-  if (!schema) return null;
-  return (schema as any)._tsadwynName || null;
+  return _getSchemaName(schema);
 }
 
 /**

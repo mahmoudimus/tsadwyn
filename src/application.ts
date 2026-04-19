@@ -27,6 +27,7 @@ import {
   type RouteShadowingLogger,
 } from "./route-shadowing.js";
 import { requestContextStorage } from "./request-context.js";
+import { getSchemaName } from "./zod-extend.js";
 
 /**
  * Regex for validating ISO date strings (YYYY-MM-DD).
@@ -948,21 +949,24 @@ export class Tsadwyn {
 
   /**
    * Build a ZodSchemaRegistry from route definitions.
+   *
+   * Goes through `getSchemaName()` rather than reading `._tsadwynName`
+   * directly. The direct-property path silently drops schemas when the
+   * legacy prop is absent (e.g., a downstream serializer that cleared
+   * non-enumerable properties) — `getSchemaName` also falls back to the
+   * WeakMap registry so the canonical schema→name binding is honored
+   * wherever it lives. CLAUDE.md states this invariant explicitly.
    */
   private _buildRegistryFromRoutes(routes: RouteDefinition[]): ZodSchemaRegistry {
     const registry = new ZodSchemaRegistry();
     for (const route of routes) {
-      if (route.requestSchema && (route.requestSchema as any)._tsadwynName) {
-        registry.register(
-          (route.requestSchema as any)._tsadwynName,
-          route.requestSchema,
-        );
+      const reqName = getSchemaName(route.requestSchema);
+      if (route.requestSchema && reqName) {
+        registry.register(reqName, route.requestSchema);
       }
-      if (route.responseSchema && (route.responseSchema as any)._tsadwynName) {
-        registry.register(
-          (route.responseSchema as any)._tsadwynName,
-          route.responseSchema,
-        );
+      const resName = getSchemaName(route.responseSchema);
+      if (route.responseSchema && resName) {
+        registry.register(resName, route.responseSchema);
       }
     }
 

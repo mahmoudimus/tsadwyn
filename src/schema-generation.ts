@@ -44,7 +44,7 @@ import type {
 } from "./structure/enums.js";
 import { InvalidGenerationInstructionError } from "./exceptions.js";
 import type { VersionBundle } from "./structure/versions.js";
-import { setSchemaName } from "./zod-extend.js";
+import { getSchemaName, setSchemaName } from "./zod-extend.js";
 
 /**
  * A named Zod schema entry in the registry.
@@ -151,11 +151,11 @@ export class ZodSchemaRegistry {
 
   /**
    * T-505: Version-aware schema lookup.
-   * Given an original schema (with _tsadwynName), returns the versioned copy
-   * from this registry, or the original if not found.
+   * Given an original schema (named via the canonical API), returns the
+   * versioned copy from this registry, or the original if not found.
    */
   getVersioned(originalSchema: ZodTypeAny): ZodTypeAny {
-    const name = (originalSchema as any)._tsadwynName;
+    const name = getSchemaName(originalSchema);
     if (!name) return originalSchema;
     const entry = this.schemas.get(name);
     if (!entry) return originalSchema;
@@ -212,7 +212,7 @@ export function transformSchemaReferences(
   registry: ZodSchemaRegistry,
 ): ZodTypeAny {
   // If this schema itself is named and has a versioned copy, return it
-  const name = (schema as any)._tsadwynName;
+  const name = getSchemaName(schema);
   if (name && registry.has(name)) {
     return registry.get(name)!.schema;
   }
