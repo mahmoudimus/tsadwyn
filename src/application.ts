@@ -26,6 +26,7 @@ import {
   type RouteShadowingPolicy,
   type RouteShadowingLogger,
 } from "./route-shadowing.js";
+import { requestContextStorage } from "./request-context.js";
 
 /**
  * Regex for validating ISO date strings (YYYY-MM-DD).
@@ -676,29 +677,45 @@ export class Tsadwyn {
 
   /**
    * Wrap a route handler to check dependencyOverrides before calling.
+   * Captures the raw Express Request into `requestContextStorage` so
+   * handlers (and any awaited helpers) can call `currentRequest()`
+   * identically on versioned + unversioned routes — the versioned
+   * dispatcher in route-generation.ts does the same wrap.
    */
   private _wrapHandlerWithOverrides(routeDef: RouteDefinition): (req: Request, res: Response, next: NextFunction) => void {
     const successStatus = routeDef.statusCode ?? 200;
-    return async (req: Request, res: Response, next: NextFunction) => {
-      try {
-        const effectiveHandler = this.dependencyOverrides.get(routeDef.handler) as
-          | typeof routeDef.handler
-          | undefined;
-        const handler = effectiveHandler || routeDef.handler;
-
-        const handlerReq = {
-          body: req.body,
-          params: req.params,
-          query: req.query,
-          headers: req.headers,
-        };
-
-        const result = await handler(handlerReq);
-        res.status(successStatus).json(result);
-      } catch (err) {
-        next(err);
-      }
+    return (req: Request, res: Response, next: NextFunction) => {
+      requestContextStorage.run(req, () => {
+        void this._dispatchUnversionedHandler(routeDef, successStatus, req, res, next);
+      });
     };
+  }
+
+  private async _dispatchUnversionedHandler(
+    routeDef: RouteDefinition,
+    successStatus: number,
+    req: Request,
+    res: Response,
+    next: NextFunction,
+  ): Promise<void> {
+    try {
+      const effectiveHandler = this.dependencyOverrides.get(routeDef.handler) as
+        | typeof routeDef.handler
+        | undefined;
+      const handler = effectiveHandler || routeDef.handler;
+
+      const handlerReq = {
+        body: req.body,
+        params: req.params,
+        query: req.query,
+        headers: req.headers,
+      };
+
+      const result = await handler(handlerReq);
+      res.status(successStatus).json(result);
+    } catch (err) {
+      next(err);
+    }
   }
 
   /**
