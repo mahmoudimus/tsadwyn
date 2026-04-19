@@ -179,6 +179,28 @@ export interface TsadwynOptions {
   errorMapper?: (err: unknown) => import("./exceptions.js").HttpError | null;
 
   /**
+   * Policy applied when an incoming `X-Api-Version` header doesn't match
+   * any value in the `VersionBundle`. Delegated to `versionPickingMiddleware`.
+   *
+   *   - `'reject'`      — respond 400 with `{error: 'unsupported_api_version',
+   *                        sent, supported}` immediately. Stripe-style.
+   *   - `'fallback'`    — substitute `apiVersionDefaultValue` and emit a
+   *                        structured warn via `versionPickingLogger`.
+   *   - `'passthrough'` (default) — store the verbatim string and let the
+   *                        downstream dispatcher 422 it. Preserves
+   *                        historical behavior.
+   */
+  onUnsupportedVersion?: "reject" | "fallback" | "passthrough";
+
+  /**
+   * Structured logger passed to `versionPickingMiddleware` — used when
+   * `onUnsupportedVersion: 'fallback'` substitutes the default version.
+   */
+  versionPickingLogger?: {
+    warn: (ctx: Record<string, unknown>, msg: string) => void;
+  };
+
+  /**
    * Policy applied when a parameterized route (e.g. `/users/:id`) is
    * registered before a literal route it would shadow (e.g. `/users/search`).
    * path-to-regexp is first-match-wins, so the literal path never receives
@@ -288,6 +310,13 @@ export class Tsadwyn {
   /** Structured logger for route-shadowing warns. Ignored when policy !== 'warn'. */
   _routeShadowingLogger: RouteShadowingLogger | undefined;
 
+  /** Policy for unknown `X-Api-Version` header values. */
+  _onUnsupportedVersion: "reject" | "fallback" | "passthrough" | undefined;
+  /** Structured logger used by `versionPickingMiddleware`. */
+  _versionPickingLogger:
+    | { warn: (ctx: Record<string, unknown>, msg: string) => void }
+    | undefined;
+
   /**
    * Access the internal versioned routers map.
    * Used by the CLI and for introspection.
@@ -342,6 +371,10 @@ export class Tsadwyn {
     // Route-shadowing diagnostic policy (default: warn)
     this._onRouteShadowing = options.onRouteShadowing ?? "warn";
     this._routeShadowingLogger = options.routeShadowingLogger;
+
+    // Unsupported-version header policy (default: passthrough — historical)
+    this._onUnsupportedVersion = options.onUnsupportedVersion;
+    this._versionPickingLogger = options.versionPickingLogger;
 
     // T-1003: Validate version format and ordering
     this._validateVersionFormat();
@@ -421,6 +454,12 @@ export class Tsadwyn {
         apiVersionDefaultValue: this.apiVersionDefaultValue,
         versionValues: this.versions.versionValues,
       };
+      if (this._onUnsupportedVersion !== undefined) {
+        pickingOpts.onUnsupportedVersion = this._onUnsupportedVersion;
+      }
+      if (this._versionPickingLogger) {
+        pickingOpts.logger = this._versionPickingLogger;
+      }
       this.expressApp.use(versionPickingMiddleware(pickingOpts));
     }
 

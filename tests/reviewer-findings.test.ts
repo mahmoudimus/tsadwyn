@@ -306,12 +306,7 @@ describe("Finding #4 (MEDIUM): onUnsupportedVersion wired through TsadwynOptions
   it("TsadwynOptions.onUnsupportedVersion='reject' produces a structured 400", async () => {
     const app = new Tsadwyn({
       versions: new VersionBundle(new Version("2024-01-01")),
-      // Cast to any because the field isn't in TsadwynOptions yet (that's
-      // the gap). Once the option is plumbed through the type should accept
-      // it and this cast can be removed.
-      ...({
-        onUnsupportedVersion: "reject",
-      } as any),
+      onUnsupportedVersion: "reject",
     });
     const router = new VersionedRouter();
     router.get("/ping", null, null, async () => ({ ok: true }));
@@ -321,8 +316,8 @@ describe("Finding #4 (MEDIUM): onUnsupportedVersion wired through TsadwynOptions
       .get("/ping")
       .set("x-api-version", "9999-99-99");
 
-    // Current behavior: dispatcher returns 422 because the option is ignored.
-    // Expected behavior: the middleware's `reject` policy fires → 400 with
+    // Pre-fix: dispatcher returns 422 because the option was ignored.
+    // Post-fix: the middleware's `reject` policy fires → 400 with
     // a structured body per `src/middleware.ts:134-141`.
     expect(res.status).toBe(400);
     expect(res.body).toEqual({
@@ -330,6 +325,32 @@ describe("Finding #4 (MEDIUM): onUnsupportedVersion wired through TsadwynOptions
       sent: "9999-99-99",
       supported: ["2024-01-01"],
     });
+  });
+
+  it("onUnsupportedVersion='fallback' substitutes default + calls versionPickingLogger", async () => {
+    const warn = vi.fn();
+    const app = new Tsadwyn({
+      versions: new VersionBundle(new Version("2024-01-01")),
+      apiVersionDefaultValue: "2024-01-01",
+      onUnsupportedVersion: "fallback",
+      versionPickingLogger: { warn },
+    });
+    const router = new VersionedRouter();
+    router.get("/ping", null, null, async () => ({ ok: true }));
+    app.generateAndIncludeVersionedRouters(router);
+
+    const res = await request(app.expressApp)
+      .get("/ping")
+      .set("x-api-version", "9999-99-99");
+
+    expect(res.status).toBe(200);
+    expect(warn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sent: "9999-99-99",
+        supported: ["2024-01-01"],
+      }),
+      expect.any(String),
+    );
   });
 });
 
