@@ -661,9 +661,17 @@ export class Tsadwyn {
     this._initialized = true;
     this._pendingRouters = null;
 
-    // T-2202: Call onStartup hook at the end of initialization
+    // T-2202: Call onStartup hook at the end of initialization.
+    // Wrap via Promise.resolve so a sync-throwing or async-rejecting hook
+    // doesn't escape as an unhandled rejection (which Node 20+ terminates
+    // the process on by default). Matches onShutdown's handling below.
     if (this._onStartup) {
-      this._onStartup();
+      Promise.resolve()
+        .then(() => this._onStartup!())
+        .catch((err: unknown) => {
+          // eslint-disable-next-line no-console
+          console.error("[tsadwyn] onStartup hook rejected:", err);
+        });
     }
   }
 
