@@ -1,16 +1,11 @@
 /**
- * FAILING TEST — verifies the gap described in tsadwyn-issues-additional-gaps.md §3
- *
- * Today, an unknown `X-Api-Version` header is stored verbatim in
- * `apiVersionStorage`. The internal dispatcher then 422s, but consumers have
- * no way to:
- *   - return a structured 400 with `{error, sent, supported}` (Stripe-like)
- *   - silently fall back to the configured default and emit telemetry
- *   - keep the existing passthrough behavior explicitly
- *
- * The proposal adds `onUnsupportedVersion: 'reject' | 'fallback' | 'passthrough'`
- * to `versionPickingMiddleware`'s options, default `'passthrough'` to preserve
- * current behavior.
+ * Covers `onUnsupportedVersion: 'reject' | 'fallback' | 'passthrough'` on
+ * `versionPickingMiddleware`. Controls how an unknown `X-Api-Version`
+ * header is handled:
+ *   - `'reject'` — 400 with `{error, sent, supported}` (Stripe-style).
+ *   - `'fallback'` — silently substitute `apiVersionDefaultValue` + warn.
+ *   - `'passthrough'` (default) — store the verbatim string and let the
+ *     downstream dispatcher decide. Preserves historical behavior.
  *
  * Run: npx vitest run tests/issue-on-unsupported-version.test.ts
  */

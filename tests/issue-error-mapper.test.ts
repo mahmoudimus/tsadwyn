@@ -1,23 +1,17 @@
 /**
- * FAILING TEST — verifies the gap described in tsadwyn-issue-error-mapper.md
+ * Covers `TsadwynOptions.errorMapper` — a pure
+ * `(err: unknown) => HttpError | null` invoked inside every versioned
+ * handler's catch block BEFORE tsadwyn's internal HTTP-likeness check.
+ * Lets consumers translate domain exceptions (which don't carry HTTP
+ * semantics) into `HttpError` so they flow through the response-migration
+ * pipeline instead of escaping to Express's default error handler.
  *
- * Today, when a handler throws a domain exception that doesn't carry a
- * `statusCode` property, tsadwyn's `_isHttpLikeError()` check fails and the
- * error escapes via `next(err)` to Express's default error handler. That
- * bypasses the response-migration pipeline entirely and forces consumers to
- * couple their domain layer to tsadwyn's internal detection.
- *
- * The proposed fix adds an `errorMapper` option on `TsadwynOptions` — a pure
- * function `(err: unknown) => HttpError | null` invoked inside the handler's
- * catch block before `_isHttpLikeError`. When it returns an `HttpError`, the
- * existing migration / status / header machinery picks up. When it returns
- * `null`, current behavior (`next(err)`) is preserved.
- *
- * These tests will turn green when:
- *   1. `TsadwynOptions.errorMapper` is accepted at construction
- *   2. The mapper runs in the catch block before the HTTP-likeness check
- *   3. Mapped HttpError flows through `migrateHttpErrors: true` migrations
- *   4. A throwing mapper does not crash the response — tsadwyn returns 500
+ * Invariants under test:
+ *   1. `errorMapper` is accepted at `Tsadwyn` construction.
+ *   2. The mapper runs in the catch block before the HTTP-likeness check.
+ *   3. Mapped `HttpError` flows through `migrateHttpErrors: true` migrations.
+ *   4. A throwing mapper does NOT crash the response — tsadwyn returns 500
+ *      via Express's default handler.
  *
  * Run: npx vitest run tests/issue-error-mapper.test.ts
  */

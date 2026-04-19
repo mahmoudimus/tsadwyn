@@ -1,23 +1,14 @@
 /**
- * FAILING TEST — verifies the gap described in tsadwyn-issue-no-content-shortcircuit.md
+ * Covers 204 No-Content short-circuit semantics in the dispatch pipeline:
  *
- * Today:
- *  - A 204 route with a schema-shared response migration MAY invoke the
- *    body-mutating transformer with `undefined` body (pipeline contract
- *    is unspecified).
- *  - There is no `headerOnly: true` option on response migrations — if
- *    you want a header migration on a 204 route, you have to write a
- *    body-safe transformer and hope the pipeline treats it right.
- *  - No registration-time lint catches "body migration targeting 204 route".
- *  - Handler returning a non-empty body on a 204-declared route is not
- *    explicitly rejected.
- *
- * These tests turn green when:
- *  1. 204 routes with return undefined / null produce empty body
- *  2. Body-mutating migrations are skipped on 204 (no NPE)
- *  3. headerOnly: true migrations fire on 204
- *  4. Registration-time lint warns for body-mutating migrations on 204 routes
- *  5. TsadwynStructureError thrown when handler returns non-empty body on 204 route
+ *   1. 204 routes returning `undefined`/`null` produce an empty body.
+ *   2. Body-mutating response migrations are skipped on 204 (no NPE on
+ *      `response.body.something = ...` when body is absent).
+ *   3. `headerOnly: true` migrations still fire on 204 (only touch headers).
+ *   4. Generation-time lint warns when a body-mutating migration targets
+ *      a 204 route (dead code at dispatch).
+ *   5. `TsadwynStructureError` is thrown when a handler returns a
+ *      non-empty body on a 204-declared route.
  *
  * Run: npx vitest run tests/issue-no-content-shortcircuit.test.ts
  */

@@ -1,19 +1,13 @@
 /**
- * FAILING TEST — verifies the gap described in tsadwyn-issue-route-options-tags.md
- *
- * Today:
- *  - RouteDefinition.tags exists (router.ts:26) and flows into OpenAPI.
- *  - endpoint().had({tags}) can mutate tags per-version.
- *  - But RouteOptions has no `tags` field — consumers can't set tags
- *    at registration time.
- *
- * These tests turn green when:
- *  1. RouteOptions.tags is accepted at registration
- *  2. Those tags flow into RouteDefinition.tags
- *  3. OpenAPI output emits them as operation.tags
- *  4. endpoint().had({tags}) replaces the registration-time list
- *  5. Warn emitted for tags matching _TSADWYN prefix
- *  6. Tags are deduped at OpenAPI emission
+ * Covers `RouteOptions.tags` — the registration-time tag list that flows
+ * into `RouteDefinition.tags` and then into OpenAPI `operation.tags`.
+ * Exercises the full lifecycle:
+ *   1. Tags accepted at registration, propagated to RouteDefinition.
+ *   2. OpenAPI output emits them as operation.tags.
+ *   3. `endpoint().had({ tags })` replaces the registration-time list
+ *      per-version.
+ *   4. `_TSADWYN`-prefixed tags warn (reserved namespace).
+ *   5. Duplicate tags dedupe at emission.
  *
  * Run: npx vitest run tests/issue-route-options-tags.test.ts
  */

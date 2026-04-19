@@ -1,22 +1,16 @@
 /**
- * FAILING TEST — verifies the gap described in tsadwyn-issue-head-requests.md
+ * Covers explicit HEAD method support in `VersionedRouter`:
  *
- * Today:
- *  - VersionedRouter has no .head() method (router.ts:188-246); consumers
- *    can't register HEAD handlers.
- *  - HEAD requests to a registered GET route land on the GET handler via
- *    Express's default HEAD-mirrors-GET behavior, but response-body
- *    migrations run against the would-be body and the output is discarded
- *    — wasted work.
- *  - migrateHttpErrors behavior on HEAD is untested.
- *
- * These tests turn green when:
- *  1. VersionedRouter.head() exists with the same signature as .get()
- *  2. The generated handler skips response-body migrations when req.method === 'HEAD'
- *  3. Header migrations still fire on HEAD
- *  4. migrateHttpErrors applies on HEAD error paths (status + headers, no body)
- *  5. A 405 is returned with an Allow header when HEAD is requested on a path with no matching GET
- *  6. A lint warn fires at generation time when .get() and .head() share a path
+ *   1. `VersionedRouter.head()` exists with the same signature as `.get()`.
+ *   2. The generated handler skips response-body migrations when
+ *      `req.method === 'HEAD'` (no wire body to mutate).
+ *   3. Header-only migrations still fire on HEAD.
+ *   4. `migrateHttpErrors` applies on HEAD error paths (status + headers,
+ *      no body).
+ *   5. 405 with an `Allow` header is returned when HEAD is requested on a
+ *      path with no matching GET.
+ *   6. Generation-time lint warns when `.get()` and `.head()` share a
+ *      path (Express auto-mirrors — explicit HEAD is rarely intentional).
  *
  * Run: npx vitest run tests/issue-head-requests.test.ts
  */

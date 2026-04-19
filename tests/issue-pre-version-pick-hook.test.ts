@@ -1,18 +1,19 @@
 /**
- * FAILING TEST — verifies the gap described in tsadwyn-issue-pre-version-pick-hook.md
+ * Covers `TsadwynOptions.preVersionPick` — a hook for consumer middleware
+ * (typically auth) that must run BEFORE `versionPickingMiddleware`, so the
+ * `apiVersionDefaultValue` resolver sees the enriched request. Without
+ * this hook, the only escape was a full `versioningMiddleware` override,
+ * which forced consumers to re-implement header extraction, default
+ * resolution, and `apiVersionStorage` scoping.
  *
- * Today: TsadwynOptions has no `preVersionPick` hook. The only way to run
- * consumer middleware before version pick is to supply the full
- * `versioningMiddleware` override, which forces consumers to re-implement
- * header extraction, default resolution, and apiVersionStorage scoping.
- *
- * These tests turn green when:
- *  1. preVersionPick runs before versionPickingMiddleware
- *  2. req.user set by preVersionPick is visible inside apiVersionDefaultValue
- *  3. Errors in preVersionPick propagate via next(err)
- *  4. Async preVersionPick is supported
- *  5. Combining with versioningMiddleware throws TsadwynStructureError
- *  6. apiVersionStorage is empty inside preVersionPick
+ * Invariants under test:
+ *   1. `preVersionPick` runs before `versionPickingMiddleware`.
+ *   2. `req.user` set in the hook is visible inside `apiVersionDefaultValue`.
+ *   3. Errors from the hook propagate via `next(err)`.
+ *   4. Async hooks are awaited.
+ *   5. Combining `preVersionPick` + `versioningMiddleware` throws
+ *      `TsadwynStructureError` at construction.
+ *   6. `apiVersionStorage` is empty inside the hook (version not yet picked).
  *
  * Run: npx vitest run tests/issue-pre-version-pick-hook.test.ts
  */

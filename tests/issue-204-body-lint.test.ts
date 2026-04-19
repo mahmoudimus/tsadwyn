@@ -1,13 +1,10 @@
 /**
- * FAILING TEST — statusCode: 204 with a non-null responseSchema is a
- * common footgun. The in-memory migration pipeline runs, but Node's
- * HTTP writer strips the body at the wire level per RFC 9110 §15.3.5
- * (verified empirically against api.stripe.com).
- *
- * tsadwyn should warn at generation time so consumers discover this
- * during development, not in production when a client reports "I'm
- * getting 204 but no body". The warning should recommend the fix
- * (use 200 or deletedResponseSchema).
+ * Covers the generation-time lint that warns when `statusCode: 204` is
+ * paired with a non-null `responseSchema`. The in-memory migration
+ * pipeline may run successfully, but Node's HTTP writer strips the body
+ * at the wire level per RFC 9110 §15.3.5 (verified empirically against
+ * api.stripe.com). The warning recommends the fix (use 200 or the
+ * `deletedResponseSchema()` helper).
  *
  * Run: npx vitest run tests/issue-204-body-lint.test.ts
  */

@@ -1,20 +1,14 @@
 /**
- * FAILING TEST — verifies the gap described in tsadwyn-issue-wildcard-route-collision.md
+ * Regression coverage for the wildcard-before-literal route-collision
+ * pattern — `path-to-regexp` matches first-registered-wins, so
+ * `GET /widgets/:id` before sibling literal `GET /widgets/archived`
+ * silently steals the literal's traffic.
  *
- * path-to-regexp matches first-registered-wins. If `GET /widgets/:id` is
- * registered before sibling literal `GET /widgets/archived`, the wildcard
- * captures `:id = "archived"` and any UUID validator middleware on the
- * wildcard 400s the request — the literal handler never runs.
- *
- * tsadwyn does not warn at registration time and does not auto-sort. The bug
- * is only visible the first time the literal endpoint is exercised against
- * a real client.
- *
- * Acceptable resolutions (the test passes if EITHER holds):
- *   1. A warning is emitted at `generateAndIncludeVersionedRouters()` /
- *      `generateVersionedRouters()` time naming both colliding routes.
- *   2. Routes are auto-sorted so literals precede wildcard siblings, and
- *      the literal endpoint is reachable.
+ * tsadwyn now detects this at generation time via `detectRouteShadows`
+ * (policy: `onRouteShadowing: 'warn' | 'throw' | 'silent'`). This file
+ * locks in the detection behavior: a warning is emitted naming both
+ * colliding routes, or the routes are reordered such that the literal
+ * endpoint becomes reachable.
  *
  * Run: npx vitest run tests/issue-wildcard-route-collision.test.ts
  */
