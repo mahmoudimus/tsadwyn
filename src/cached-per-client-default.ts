@@ -38,7 +38,21 @@ export interface CachedPerClientDefaultVersionOptions {
   resolvePin: (clientId: string) => string | null | Promise<string | null>;
   /** Value returned when identity is unknown or no pin is stored. Required. */
   fallback: string;
-  /** Stale-pin policy; see `perClientDefaultVersion` for semantics. Default: 'fallback'. */
+  /**
+   * Stale-pin policy; see `perClientDefaultVersion` for semantics. Default: 'fallback'.
+   *
+   * **Interaction with caching:** all three modes that *succeed* (return a
+   * string) get cached for `ttlMs` — so a stale pin resolved via
+   * `'fallback'` is cached at the fallback value, and `'passthrough'` is
+   * cached at the stored stale value. **`'reject'` throws from
+   * `resolvePin`**, and per the rejection-bypass policy every request
+   * for a stale-pinned client hammers `resolvePin` again (no back-off,
+   * no negative caching). That's intentional — if the pin's truly
+   * invalid, you want to know about it on every call, not be silenced
+   * for `ttlMs`. If that's a problem for your traffic shape, pick a
+   * different stale policy or narrow `supportedVersions` to accept the
+   * value.
+   */
   onStalePin?: "fallback" | "passthrough" | "reject";
   /** Enables the stale-pin check against the VersionBundle. */
   supportedVersions?: readonly string[];
@@ -151,7 +165,12 @@ export function cachedPerClientDefaultVersion(
       cache.delete(clientId);
     }
     // Create a new entry, tracking settlement so rejections don't poison
-    // the cache for the full TTL.
+    // the cache for the full TTL. This is a deliberate contract — callers
+    // using `onStalePin: 'reject'` rely on it: every request for a
+    // stale-pinned client re-hits resolvePin, surfacing the misconfig on
+    // every call rather than getting silenced for ttlMs. See the test
+    // "Finding #8" in tests/reviewer-findings.test.ts for the lock-in.
+    // Do NOT "optimize" by caching rejections — it breaks that contract.
     const entry: CacheEntry = {
       promise: doResolve(clientId),
       cachedAt: now,
