@@ -983,22 +983,44 @@ function isNonJsonResponse(result: any): boolean {
 
 /**
  * T-605: Send a non-JSON response appropriately.
+ *
+ * When `isHead` is true, headers are still set (content-type,
+ * content-length if known) so a client can read metadata from a HEAD
+ * probe, but no body bytes are written — per RFC 7231 §4.3.2, a response
+ * to HEAD must never carry a message body. For streaming results this
+ * means we suppress the pipe and close the response after headers.
  */
-function sendNonJsonResponse(res: Response, result: any, statusCode: number): void {
+function sendNonJsonResponse(
+  res: Response,
+  result: any,
+  statusCode: number,
+  isHead: boolean = false,
+): void {
   if (Buffer.isBuffer(result)) {
     res.status(statusCode);
     if (!res.getHeader("content-type")) {
       res.setHeader("content-type", "application/octet-stream");
     }
     res.setHeader("content-length", result.length.toString());
-    res.end(result);
+    if (isHead) {
+      res.end();
+    } else {
+      res.end(result);
+    }
   } else if (typeof result.pipe === "function") {
     // ReadableStream / Node.js Readable
     res.status(statusCode);
     if (!res.getHeader("content-type")) {
       res.setHeader("content-type", "application/octet-stream");
     }
-    result.pipe(res);
+    if (isHead) {
+      // Don't pipe — HEAD forbids a body. If the caller needed
+      // content-length for their HEAD clients, they should emit a Buffer
+      // (length known) or use a schema+JSON response instead of raw streaming.
+      res.end();
+    } else {
+      result.pipe(res);
+    }
   } else if (typeof result === "string") {
     res.status(statusCode);
     if (!res.getHeader("content-type")) {
@@ -1006,7 +1028,11 @@ function sendNonJsonResponse(res: Response, result: any, statusCode: number): vo
     }
     const bodyBuf = Buffer.from(result, "utf-8");
     res.setHeader("content-length", bodyBuf.length.toString());
-    res.end(result);
+    if (isHead) {
+      res.end();
+    } else {
+      res.end(result);
+    }
   }
 }
 
@@ -1204,6 +1230,12 @@ function createVersionedHandler(
       const activeHandler = effectiveHandler || routeDef.handler;
       const result = await activeHandler(handlerReq);
 
+      // Compute HEAD early so every wire-emit path below can suppress
+      // body bytes per RFC 7231 §4.3.2. Previously this flag was only
+      // checked in the JSON and null-result paths; Buffer / stream /
+      // plain-string paths leaked body content on HEAD.
+      const isHead = req.method === "HEAD";
+
       // raw() marker: set the declared mime type so the non-JSON path
       // below picks it up (sendNonJsonResponse preserves pre-set headers).
       const rawMarker = isRawResponse(routeDef.responseSchema);
@@ -1213,7 +1245,7 @@ function createVersionedHandler(
 
       // T-605: Handle non-JSON responses
       if (isNonJsonResponse(result)) {
-        sendNonJsonResponse(res, result, successStatus);
+        sendNonJsonResponse(res, result, successStatus, isHead);
         return;
       }
 
@@ -1221,7 +1253,7 @@ function createVersionedHandler(
       if (typeof result === "string") {
         // Check if response migrations need to run on this
         if (responseMigrations.length === 0) {
-          sendNonJsonResponse(res, result, successStatus);
+          sendNonJsonResponse(res, result, successStatus, isHead);
           return;
         }
         // If there are migrations and it looks like JSON, try to parse and migrate
@@ -1242,11 +1274,11 @@ function createVersionedHandler(
           const bodyBuffer = Buffer.from(jsonBody, "utf-8");
           res.setHeader("content-length", bodyBuffer.length.toString());
           res.setHeader("content-type", "application/json; charset=utf-8");
-          res.status(responseInfo.statusCode).end(jsonBody);
+          res.status(responseInfo.statusCode).end(isHead ? undefined : jsonBody);
           return;
         } catch {
           // Not JSON - send as string
-          sendNonJsonResponse(res, result, successStatus);
+          sendNonJsonResponse(res, result, successStatus, isHead);
           return;
         }
       }
@@ -1262,7 +1294,7 @@ function createVersionedHandler(
       // body-mutating response migrations (running only `headerOnly` or
       // `migrateHttpErrors`-flagged migrations, which opt in to body-less
       // contexts explicitly).
-      const isHead = req.method === "HEAD";
+      // `isHead` was computed earlier before the non-JSON / string branches.
       const isNullResult = result === undefined || result === null;
 
       if (isNullResult && !isHead) {

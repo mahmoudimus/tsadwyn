@@ -201,52 +201,94 @@ describe("Finding #2 (HIGH): migratePayloadToVersion applies path-based migratio
 // the response"). The JSON path at 1350 correctly suppresses via isHead.
 // ────────────────────────────────────────────────────────────────────────────
 describe("Finding #3 (MEDIUM): HEAD requests do not send a body on non-JSON responses", () => {
-  function simpleApp() {
-    const router = new VersionedRouter();
-
-    router.head("/download", null, raw({ mimeType: "application/octet-stream" }), async () => {
-      return Buffer.from("secret-payload-should-not-ship", "utf-8");
-    });
-
-    router.head("/text", null, null, async () => {
-      return "text-payload-should-not-ship";
-    });
-
+  // NOTE: Node's HTTP writer strips bodies from HEAD responses at the
+  // wire level — so the bug is NOT directly observable at the client.
+  // The fix is about app-level correctness: tsadwyn should not WRITE
+  // body bytes into the socket knowing they'll be discarded (wasted
+  // work on large Buffers) and should not leak body bytes into any
+  // logging / middleware that wraps res.end. We test by spying on
+  // res.end's arguments to verify nothing body-like was written.
+  function appWithEndSpy(register: (router: VersionedRouter) => void) {
+    const endCalls: Array<{ method: string; url: string; args: any[] }> = [];
     const app = new Tsadwyn({
       versions: new VersionBundle(new Version("2024-01-01")),
+      preVersionPick: (req, res, next) => {
+        const originalEnd = res.end.bind(res);
+        (res as any).end = function (...args: any[]) {
+          endCalls.push({ method: req.method, url: req.url, args });
+          return (originalEnd as any)(...args);
+        };
+        next();
+      },
     });
+    const router = new VersionedRouter();
+    register(router);
     app.generateAndIncludeVersionedRouters(router);
-    return app;
+    return { app, endCalls };
   }
 
-  it("Buffer response on HEAD: no body on the wire", async () => {
-    const app = simpleApp();
+  it("Buffer response on HEAD: res.end is NOT called with the buffer content", async () => {
+    const { app, endCalls } = appWithEndSpy((router) => {
+      router.head(
+        "/download",
+        null,
+        raw({ mimeType: "application/octet-stream" }),
+        async () => Buffer.from("secret-payload-should-not-ship", "utf-8"),
+      );
+    });
+
     const res = await request(app.expressApp)
       .head("/download")
       .set("x-api-version", "2024-01-01");
 
     expect(res.status).toBe(200);
-    // supertest's body on HEAD is a Buffer; length 0 means no body was sent.
-    // Accept empty Buffer, empty string, or undefined — all represent "no body".
-    const bodyLength =
-      res.body instanceof Buffer
-        ? res.body.length
-        : typeof res.body === "string"
-          ? res.body.length
-          : res.body == null
-            ? 0
-            : JSON.stringify(res.body).length;
-    expect(bodyLength).toBe(0);
+    // Content-length header preserves the would-be length so HEAD
+    // probes carry the size metadata.
+    expect(res.headers["content-length"]).toBeDefined();
+
+    // The HEAD request should have invoked res.end() with NO body argument.
+    const headEndCalls = endCalls.filter((c) => c.method === "HEAD");
+    expect(headEndCalls.length).toBeGreaterThan(0);
+    for (const call of headEndCalls) {
+      // Before the fix: args[0] is the Buffer("secret-payload-..."). After the
+      // fix: args is empty or args[0] is undefined.
+      const arg0 = call.args[0];
+      if (arg0 !== undefined) {
+        if (Buffer.isBuffer(arg0)) {
+          expect(arg0.length).toBe(0);
+        } else if (typeof arg0 === "string") {
+          expect(arg0).toBe("");
+        }
+      }
+    }
   });
 
-  it("string response on HEAD: no body on the wire", async () => {
-    const app = simpleApp();
+  it("string response on HEAD: res.end is NOT called with the string content", async () => {
+    const { app, endCalls } = appWithEndSpy((router) => {
+      router.head(
+        "/text",
+        null,
+        null,
+        async () => "text-payload-should-not-ship",
+      );
+    });
+
     const res = await request(app.expressApp)
       .head("/text")
       .set("x-api-version", "2024-01-01");
 
     expect(res.status).toBe(200);
-    expect(res.text ?? "").toBe("");
+
+    const headEndCalls = endCalls.filter((c) => c.method === "HEAD");
+    expect(headEndCalls.length).toBeGreaterThan(0);
+    for (const call of headEndCalls) {
+      const arg0 = call.args[0];
+      if (arg0 !== undefined) {
+        expect(arg0 === "" || (Buffer.isBuffer(arg0) && arg0.length === 0)).toBe(
+          true,
+        );
+      }
+    }
   });
 });
 
